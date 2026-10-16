@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SafeScan Hotspot Map</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <style>
+    :root { --bg: #100e1c; --panel: #131120; --border: #231f3d; --text: #eae8ff; --dim: #9d99cc; --tamper: #ff4081; --reports: #ffab40; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, sans-serif; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; height: 100%; }
+    #map { height: 100%; }
+    aside { background: var(--panel); border-left: 1px solid var(--border); padding: 20px; overflow-y: auto; display: grid; gap: 18px; align-content: start; }
+    h1 { font-size: 20px; margin: 0; }
+    h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 0 0 6px; }
+    p { margin: 0; color: var(--dim); }
+    ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+    li { font-size: 13px; word-break: break-all; }
+    li small { display: block; color: var(--dim); word-break: normal; }
+    .key { display: flex; gap: 14px; font-size: 13px; color: var(--dim); }
+    .key i { display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+    a { color: #00e5ff; }
+    @media (max-width: 760px) { .layout { grid-template-columns: 1fr; grid-template-rows: 55vh auto; height: auto; } #map { height: 55vh; } aside { border-left: 0; border-top: 1px solid var(--border); } }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <div id="map" role="region" aria-label="Map of reported QR code tampering"></div>
+    <aside>
+      <div>
+        <h1>SafeScan hotspots</h1>
+        <p>Areas where people reported malicious or tampered QR codes. Each square is a roughly 5 km cell, shown only after several reports. Updated nightly.</p>
+      </div>
+      <div class="key"><span><i style="background:var(--tamper)"></i>Sticker tampering pattern</span><span><i style="background:var(--reports)"></i>Reports</span></div>
+      <section><h2>Campaigns</h2><ul id="campaigns"></ul></section>
+      <section><h2>Verified threats</h2><ul id="threats"></ul></section>
+      <p>Data: <a href="../data/hotspots.json">hotspots.json</a> · <a href="../data/threats.json">threats.json</a></p>
+    </aside>
+  </div>
+
+  <script>
+    // Geohash cell -> [west, south, east, north]
+    const BASE32 = '0123456789bcdefghjkmnpqrstuvwxyz';
+    function geohashBounds(hash) {
+      let even = true, lat = [-90, 90], lon = [-180, 180];
+      for (const ch of hash) {
+        const bits = BASE32.indexOf(ch);
+        for (let n = 4; n >= 0; n--) {
+          const range = even ? lon : lat;
+          const mid = (range[0] + range[1]) / 2;
+          if ((bits >> n) & 1) range[0] = mid; else range[1] = mid;
+          even = !even;
+        }
+      }
+      return [lon[0], lat[0], lon[1], lat[1]];
+    }
+
+    const text = (s) => document.createTextNode(s);
+    function listItem(main, detail) {
+      const li = document.createElement('li');
+      li.append(text(main));
+      const small = document.createElement('small');
+      small.append(text(detail));
+      li.append(small);
+      return li;
+    }
+
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: 'https://tiles.openfreemap.org/styles/liberty',
+      center: [0, 20],
+      zoom: 1.5,
+    });
+    map.addControl(new maplibregl.NavigationControl(), 'top-left');
+
+    Promise.all([
+      fetch('../data/hotspots.json').then((r) => r.json()),
+      fetch('../data/threats.json').then((r) => r.json()),
+    ]).then(([hot, threats]) => {
+      const campaigns = document.getElementById('campaigns');
+      if (!hot.campaigns.length) campaigns.append(listItem('None detected', ''));
+      for (const c of hot.campaigns) campaigns.append(listItem(c.url, `Seen in ${c.cellCount} areas`));
+
+      const list = document.getElementById('threats');
+      if (!threats.threats.length) list.append(listItem('None yet', ''));
+      for (const t of threats.threats.slice(0, 50)) list.append(listItem(t.url, `${t.category.replaceAll('_', ' ')} · last seen ${t.lastSeen}`));
+
+      const features = hot.cells.map((c) => {
+        const [w, s, e, n] = geohashBounds(c.geohash5);
+        return {
+          type: 'Feature',
+          properties: c,
+          geometry: { type: 'Polygon', coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] },
+        };
+      });
+
+      map.on('load', () => {
+        map.addSource('cells', { type: 'geojson', data: { type: 'FeatureCollection', features } });
+        map.addLayer({
+          id: 'cells',
+          type: 'fill',
+          source: 'cells',
+          paint: {
+            'fill-color': ['case', ['get', 'tamperingHotspot'], '#ff4081', '#ffab40'],
+            'fill-opacity': ['interpolate', ['linear'], ['get', 'reportCount'], 3, 0.35, 30, 0.75],
+            'fill-outline-color': '#100e1c',
+          },
+        });
+        map.on('click', 'cells', (ev) => {
+          const p = ev.features[0].properties;
+          const div = document.createElement('div');
+          div.style.color = '#100e1c';
+          div.append(text(`${p.reportCount} reports, ${p.tamperCount} with sticker warnings, ${p.distinctUrls} different links. Last report ${p.lastSeen}.`));
+          new maplibregl.Popup().setLngLat(ev.lngLat).setDOMContent(div).addTo(map);
+        });
+        map.on('mouseenter', 'cells', () => (map.getCanvas().style.cursor = 'pointer'));
+        map.on('mouseleave', 'cells', () => (map.getCanvas().style.cursor = ''));
+
+        if (features.length) {
+          const b = new maplibregl.LngLatBounds();
+          for (const f of features) for (const pt of f.geometry.coordinates[0]) b.extend(pt);
+          map.fitBounds(b, { padding: 40, maxZoom: 10 });
+        }
+      });
+    });
+  </script>
+</body>
+</html>
