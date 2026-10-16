@@ -156,6 +156,8 @@ export class InfraStack extends cdk.Stack {
         GITHUB_REPO: this.node.tryGetContext('githubRepo') ?? 'Langton49/safescan_aws',
         GITHUB_BRANCH: this.node.tryGetContext('githubBranch') ?? 'main',
         GITHUB_DATA_DIR: 'docs/data',
+        // GitHub publishing stays off until Pages is set up: `npx cdk deploy -c publish=true`
+        PUBLISH_ENABLED: this.node.tryGetContext('publish') === 'true' ? 'true' : 'false',
       },
     });
     urlVerdicts.grantReadWriteData(nightlyFn);
@@ -166,7 +168,11 @@ export class InfraStack extends cdk.Stack {
     new scheduler.Schedule(this, 'NightlySchedule', {
       description: 'SafeScan nightly feed ingest, hotspot counts and public export',
       schedule: scheduler.ScheduleExpression.cron({ minute: '0', hour: '3' }), // 03:00 UTC
-      target: new schedulerTargets.LambdaInvoke(nightlyFn),
+      // The default is 185 retries over 24 hours; one retry is enough for a nightly batch job
+      target: new schedulerTargets.LambdaInvoke(nightlyFn, {
+        retryAttempts: 1,
+        maxEventAge: cdk.Duration.hours(1),
+      }),
     });
 
     // ---- Outputs ----
