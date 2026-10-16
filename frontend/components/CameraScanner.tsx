@@ -1,5 +1,5 @@
 import { BarcodeScanningResult, BarcodeType, CameraView } from 'expo-camera';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Animated, Easing, Linking, Platform, Pressable, View } from 'react-native';
 import AppIcon from './AppIcon';
 import Text from './AppText';
@@ -36,7 +36,8 @@ export default function CameraScanner({
   const [cameraReady, setCameraReady] = useState(false);
   const [torchEnabled, setTorchEnabled] = useState(false);
   const [cameraKey, setCameraKey] = useState(0);
-  const scanLineProgress = useRef(new Animated.Value(0)).current;
+  // Lazy state, not a ref: the value is created once and is safe to read during render
+  const [scanLineProgress] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     if (!active || !cameraReady || reduceMotion || cameraError) {
@@ -63,12 +64,16 @@ export default function CameraScanner({
     return () => animation.stop();
   }, [active, cameraError, cameraReady, reduceMotion, scanLineProgress]);
 
-  useEffect(() => {
+  // Turn the torch off and wait for a fresh camera when scanning is paused.
+  // Adjusting state during render when a prop changes avoids an extra effect render.
+  const [wasActive, setWasActive] = useState(active);
+  if (active !== wasActive) {
+    setWasActive(active);
     if (!active) {
       setTorchEnabled(false);
       setCameraReady(false);
     }
-  }, [active]);
+  }
 
   const askForPermission = async () => {
     setPermissionLoading(true);

@@ -175,6 +175,11 @@ function barcodeTypeLabel(type: string) {
   }
 }
 
+// History IDs are created in event handlers, never during render
+function historyId(suffix: string) {
+  return `${Date.now()}-${suffix}`;
+}
+
 function shouldStoreBarcodeValue(type: string) {
   return ['ean13', 'ean8', 'upc_a', 'upc_e'].includes(type.toLowerCase());
 }
@@ -362,7 +367,7 @@ export default function Scanner() {
 
       const safeDomain = parsed.hostname;
       const storedReport: StoredScan = {
-        id: `${Date.now()}-${safeDomain}`,
+        id: historyId(safeDomain),
         scanType: 'url',
         displayValue: safeDomain,
         finalVerdict: report.finalVerdict,
@@ -411,7 +416,7 @@ export default function Scanner() {
     setIsHistoricalReport(false);
     setScreen('code');
     const historyItem: StoredScan = {
-      id: `${Date.now()}-${result.type}`,
+      id: historyId(result.type),
       scanType: 'barcode',
       displayValue,
       barcodeType: result.type,
@@ -806,7 +811,7 @@ export default function Scanner() {
           styles={styles}
           onPress={() => setModal({
             title: 'Your privacy',
-            body: 'Links are sent to SafeScan’s backend for checking. The backend may query Google Safe Browsing. Recent history is stored locally on this device and keeps the domain, verdict, scan time, and check names and statuses—not URL paths, query parameters, fragments, or evidence details. Clear history any time.',
+            body: 'Links are sent to SafeScan’s backend for checking, with tracking parameters removed. The backend may query Google Safe Browsing. The app also sends a random ID created on this device; the backend stores only a scrambled (hashed) form of it, to limit abuse. Recent history is stored locally on this device and keeps the domain, verdict, scan time, and check names and statuses—not URL paths, query parameters, fragments, or evidence details. Clear history any time.',
           })}
         />
         <View style={styles.separator} />

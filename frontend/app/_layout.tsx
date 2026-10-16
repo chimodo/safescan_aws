@@ -1,3 +1,5 @@
+// React Native's built-in URL lacks hostname, searchParams and more; the shared URL modules need them
+import 'react-native-url-polyfill/auto';
 import {
   Montserrat_400Regular,
   Montserrat_500Medium,
