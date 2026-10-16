@@ -1,0 +1,19 @@
+{
+  "name": "scan-lambda",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SafeScan POST /scan Lambda, bundled by the CDK stack in infra/",
+  "devDependencies": {
+    "@aws-sdk/client-cloudformation": "^3.1152.0",
+    "@types/aws-lambda": "^8.10.164",
+    "@types/node": "^22.20.5",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1152.0",
+    "@aws-sdk/client-ssm": "^3.1152.0",
+    "@aws-sdk/lib-dynamodb": "^3.1152.0",
+    "@aws-sdk/util-dynamodb": "^3.996.9"
+  }
+}
