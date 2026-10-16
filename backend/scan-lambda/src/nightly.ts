@@ -233,6 +233,8 @@ async function publish(
   campaigns: { url: string; cellCount: number }[],
   threats: Awaited<ReturnType<typeof buildThreatExport>>
 ): Promise<Record<string, string>> {
+  // Off until the team has GitHub Pages ready; turn on with `cdk deploy -c publish=true`
+  if (process.env.PUBLISH_ENABLED !== 'true') return { skipped: 'publishing disabled' };
   const repo = process.env.GITHUB_REPO;
   const branch = process.env.GITHUB_BRANCH ?? 'main';
   const dir = process.env.GITHUB_DATA_DIR ?? 'docs/data';
@@ -250,16 +252,23 @@ async function publish(
     'hotspots.json': JSON.stringify({ cells, campaigns }, null, 1) + '\n',
     'threats.json': JSON.stringify({ threats }, null, 1) + '\n',
   };
+  // A GitHub failure is logged, not thrown: the feed and hotspot work above is already saved,
+  // and failing the run would make the scheduler retry the whole job
   const result: Record<string, string> = {};
   for (const [name, content] of Object.entries(files)) {
-    result[name] = await putFile({
-      token,
-      repo,
-      branch,
-      path: `${dir}/${name}`,
-      content,
-      message: `Nightly data update: ${name}`,
-    });
+    try {
+      result[name] = await putFile({
+        token,
+        repo,
+        branch,
+        path: `${dir}/${name}`,
+        content,
+        message: `Nightly data update: ${name}`,
+      });
+    } catch (err) {
+      console.error(`Publishing ${name} failed`, err);
+      result[name] = `failed: ${(err as Error).message}`;
+    }
   }
   return result;
 }
