@@ -1,4 +1,21 @@
+<<<<<<< HEAD
 import { Stack } from "expo-router";
+=======
+// React Native's built-in URL lacks hostname, searchParams and more; the shared URL modules need them
+import 'react-native-url-polyfill/auto';
+import {
+  Montserrat_400Regular,
+  Montserrat_500Medium,
+  Montserrat_600SemiBold,
+  Montserrat_700Bold,
+  Montserrat_800ExtraBold,
+} from '@expo-google-fonts/montserrat';
+import { Orbitron_600SemiBold } from '@expo-google-fonts/orbitron';
+import { Stack } from 'expo-router';
+import { useFonts } from 'expo-font';
+import { useEffect } from 'react';
+import { FontsLoadedContext } from '../components/FontsLoadedContext';
+>>>>>>> 4bd5891280e0407291b248490b3cc21e0f797f37
 
 export default function RootLayout() {
   return <Stack />;
