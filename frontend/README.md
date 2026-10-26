@@ -1,50 +1,34 @@
-# Welcome to your Expo app 👋
+# SafeScan
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+SafeScan is an Expo app that checks links and scans QR codes/barcodes.
 
-## Get started
+## Run the native sticker check
 
-1. Install dependencies
-
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+QR sticker analysis uses `react-native-fast-opencv`, a native JSI module. It does not run in Expo Go. Use a development build on an Android device/emulator or iOS device/simulator:
 
 ```bash
-npm run reset-project
+npm install
+npx expo run:android
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+For iOS, run `npx expo run:ios` on macOS. These commands generate the native project when needed, compile the native OpenCV module, install the app, and start Metro.
 
-## Learn more
+To create an Android APK in the EAS cloud for direct installation on a phone, log in with `npx eas-cli login`, then run `npx eas-cli build --platform android --profile preview`. The `preview` profile in [`eas.json`](./eas.json) is configured for an internally distributed APK. The first build may ask to create/link an EAS project and configure Android application signing; follow the prompts. Once complete, open the APK installation link on the phone. This route requires internet access and an Expo account but no USB connection.
 
-To learn more about developing your project with Expo, look at the following resources:
+For an Android development-client build (for development with Metro), use `npx eas-cli build --platform android --profile development`; the profile also creates an installable APK. For a cloud iOS build, create an iOS development profile and use `eas build --profile development --platform ios`.
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+After the development build is installed, start Metro for that client with:
 
-## Join the community
+```bash
+npx expo start --dev-client
+```
 
-Join our community of developers creating universal apps.
+You can still use `npx expo start --web` for the rest of the interface; the sticker check will report that a native development build is required.
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+The on-device check takes two still captures with the flashlight off and on, rectifies the QR and nearby area, and compares candidate highlights. Its response index is experimental—not a calibrated probability or a guarantee that a sticker is present. Users should verify that any sticker is intended to be there. Sticker measurements, timing, and optional correctness feedback are stored locally for the developer diagnostics page; captured images are not saved.
+
+## General Expo development
+
+Install dependencies with `npm install`, then run `npx expo start` for the standard Expo development server. Expo Go can be used for features that do not require the OpenCV native module, but it cannot run QR sticker analysis.
+
+Learn more about [Expo development builds](https://docs.expo.dev/develop/development-builds/introduction/) and [`react-native-fast-opencv`](https://lukaszkurantdev.github.io/react-native-fast-opencv/installation).

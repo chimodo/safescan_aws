@@ -1,24 +1,22 @@
 import { BarcodeScanningResult, BarcodeType, CameraView } from 'expo-camera';
-import React, { useEffect, useState } from 'react';
+import type { BarcodePoint } from 'expo-camera';
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Easing, Linking, Platform, Pressable, View } from 'react-native';
 import AppIcon from './AppIcon';
 import Text from './AppText';
 import { ColorPalette } from '../constants/colors';
+import type { PolygonPoint, TamperCapture } from '../features/qr-tamper/types';
 import { supportedBarcodeTypes } from '../hooks/scanCodeImage';
 
-export default function CameraScanner({
-  active,
-  permission,
-  requestPermission,
-  colors,
-  styles,
-  reduceMotion,
-  hasPendingCode,
-  onCode,
-  onGallery,
-  galleryBusy,
-  onNotice,
-}: {
+export interface CameraScannerHandle {
+  runTamperCheck(cornerPoints: BarcodePoint[]): Promise<TamperCapture>;
+}
+
+const CAMERA_SETTLE_MS = 1400;
+const BASELINE_SETTLE_MS = 250;
+const RESPONSE_THRESHOLD = 0.005;
+
+const CameraScanner = forwardRef<CameraScannerHandle, {
   active: boolean;
   permission: { granted: boolean; canAskAgain: boolean } | null;
   requestPermission: () => Promise<{ granted: boolean }>;
@@ -30,7 +28,22 @@ export default function CameraScanner({
   onGallery: () => void;
   galleryBusy: boolean;
   onNotice: (message: string) => void;
-}) {
+}>(function CameraScanner({
+  active,
+  permission,
+  requestPermission,
+  colors,
+  styles,
+  reduceMotion,
+  hasPendingCode,
+  onCode,
+  onGallery,
+  galleryBusy,
+  onNotice,
+}, ref) {
+  const cameraRef = useRef<CameraView>(null);
+  const latestBarcode = useRef<BarcodeScanningResult | null>(null);
+  const layoutSize = useRef({ width: 0, height: 0 });
   const [permissionLoading, setPermissionLoading] = useState(false);
   const [cameraError, setCameraError] = useState('');
   const [cameraReady, setCameraReady] = useState(false);
@@ -111,21 +124,149 @@ export default function CameraScanner({
     setCameraError(event.message || 'The camera could not be started.');
   };
 
+  const onBarcodeScanned = (result: BarcodeScanningResult) => {
+    latestBarcode.current = result;
+    if (!hasPendingCode) onCode(result);
+  };
+
+  useImperativeHandle(ref, () => ({
+    async runTamperCheck(cornerPoints) {
+      const startedAt = Date.now();
+      if (Platform.OS === 'web') {
+        return {
+          status: 'unavailable',
+          predictedSticker: null,
+          responseIndex: null,
+          captureMs: 0,
+          processingMs: 0,
+          totalMs: Date.now() - startedAt,
+          message: 'On-device sticker analysis is available in an iOS or Android development build.',
+        };
+      }
+      const camera = cameraRef.current;
+      if (!cameraReady || !camera) {
+        return {
+          status: 'unavailable',
+          predictedSticker: null,
+          responseIndex: null,
+          captureMs: 0,
+          processingMs: 0,
+          totalMs: Date.now() - startedAt,
+          message: 'The camera is not ready to capture the QR code.',
+        };
+      }
+      if (cornerPoints.length < 4 || layoutSize.current.width <= 0 || layoutSize.current.height <= 0) {
+        return {
+          status: 'unavailable',
+          predictedSticker: null,
+          responseIndex: null,
+          captureMs: 0,
+          processingMs: 0,
+          totalMs: Date.now() - startedAt,
+          message: 'The camera did not provide the QR code corners needed for visual analysis.',
+        };
+      }
+
+      const previousTorch = torchEnabled;
+      let captureMs = 0;
+      try {
+        setTorchEnabled(false);
+        await new Promise((resolve) => setTimeout(resolve, BASELINE_SETTLE_MS));
+        const offPicture = await camera.takePictureAsync({ base64: true, quality: 0.8 });
+        if (!offPicture.base64) throw new Error('The camera did not return image data for the baseline capture.');
+
+        setTorchEnabled(true);
+        await new Promise((resolve) => setTimeout(resolve, CAMERA_SETTLE_MS));
+        const onPicture = await camera.takePictureAsync({ base64: true, quality: 0.8 });
+        if (!onPicture.base64) throw new Error('The camera did not return image data for the flashlight capture.');
+        captureMs = Date.now() - startedAt;
+
+        const currentPoints = latestBarcode.current?.cornerPoints;
+        const mapPoints = (points: BarcodePoint[], width: number, height: number): PolygonPoint[] =>
+          points.slice(0, 4).map(({ x, y }) => ({
+            x: x * width / layoutSize.current.width,
+            y: y * height / layoutSize.current.height,
+          }));
+        const offPoints = mapPoints(cornerPoints, offPicture.width, offPicture.height);
+        const onPoints = mapPoints(
+          currentPoints && currentPoints.length >= 4 ? currentPoints : cornerPoints,
+          onPicture.width,
+          onPicture.height,
+        );
+
+        setTorchEnabled(previousTorch);
+        const processingStartedAt = Date.now();
+        const { measureSpecularResponse } = await import('../features/qr-tamper/opencv');
+        const measurements = measureSpecularResponse(
+          offPicture.base64,
+          onPicture.base64,
+          offPoints,
+          onPoints,
+        );
+        const processingMs = Date.now() - processingStartedAt;
+        const lightValueChange =
+          measurements.rectified_mean_value_on - measurements.rectified_mean_value_off;
+        const lightHighlightChange =
+          measurements.rectified_highlight_fraction_on - measurements.rectified_highlight_fraction_off;
+        const enoughLightChange = lightValueChange >= 12 || lightHighlightChange >= 0.015;
+        const totalMs = Date.now() - startedAt;
+
+        return {
+          status: enoughLightChange ? 'complete' : 'inconclusive',
+          predictedSticker: enoughLightChange
+            ? measurements.response_index >= RESPONSE_THRESHOLD
+            : null,
+          responseIndex: measurements.response_index,
+          captureMs,
+          processingMs,
+          totalMs,
+          message: enoughLightChange
+            ? undefined
+            : 'The flashlight did not produce a clear lighting change. Keep the QR centered and try again.',
+          measurements,
+        };
+      } catch (error) {
+        setTorchEnabled(previousTorch);
+        const message = error instanceof Error
+          ? error.message
+          : 'The sticker analysis could not complete on this device.';
+        return {
+          status: 'unavailable',
+          predictedSticker: null,
+          responseIndex: null,
+          captureMs,
+          processingMs: 0,
+          totalMs: Date.now() - startedAt,
+          message,
+        };
+      }
+    },
+  }), [cameraReady, torchEnabled]);
+
   const translateY = scanLineProgress.interpolate({ inputRange: [0, 1], outputRange: [5, 212] });
   const barcodeTypes = Platform.OS === 'web' ? ['qr'] as BarcodeType[] : supportedBarcodeTypes;
 
   return (
-    <View style={styles.homeCameraCard}>
+    <View
+      style={styles.homeCameraCard}
+      onLayout={(event) => {
+        layoutSize.current = {
+          width: event.nativeEvent.layout.width,
+          height: event.nativeEvent.layout.height,
+        };
+      }}
+    >
       {active && permission?.granted && !cameraError ? (
         <>
           <CameraView
+            ref={cameraRef}
             key={cameraKey}
             style={styles.homeCameraPreview}
             facing="back"
             active={active}
             enableTorch={Platform.OS !== 'web' && torchEnabled}
             barcodeScannerSettings={{ barcodeTypes }}
-            onBarcodeScanned={hasPendingCode ? undefined : onCode}
+            onBarcodeScanned={onBarcodeScanned}
             onCameraReady={() => setCameraReady(true)}
             onMountError={onCameraError}
           />
@@ -242,4 +383,6 @@ export default function CameraScanner({
       )}
     </View>
   );
-}
+});
+
+export default CameraScanner;
