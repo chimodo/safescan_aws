@@ -1,35 +1,50 @@
-# SafeScan
+# Welcome to your Expo app 👋
 
-SafeScan is an Expo app for checking links before opening them. Home shows a live camera preview when access is available. The preview detects QR codes and supported barcodes; tapping **Scan QR Code** confirms the detected content, and only decoded HTTP(S) QR links are sent to SafeScan for verification. Other decoded content is shown without treating it as a website. The app also includes scan results, an expandable report, on-device history, and settings.
+This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
 
-## Run the app
+## Get started
 
-Install dependencies and start the web version:
+1. Install dependencies
+
+   ```bash
+   npm install
+   ```
+
+2. Start the app
+
+   ```bash
+   npx expo start
+   ```
+
+In the output, you'll find options to open the app in a
+
+- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
+- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
+- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
+- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+
+You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+
+## Get a fresh project
+
+When you're ready, run:
 
 ```bash
-npm ci
-npm run web
+npm run reset-project
 ```
 
-To use a native device or emulator, run `npx expo start` and follow the Expo CLI instructions.
+This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
 
-## Camera and image scanning
+## Learn more
 
-Camera permission is requested from the Home permission panel when needed. The live preview pauses when the app backgrounds or the user navigates away from Home, and resumes when they return if permission remains available. Native builds scan QR codes and standard barcode formats supported by Expo Camera. Web live scanning is limited to QR codes by Expo Camera; image scanning in a browser requires its `BarcodeDetector` API. On native devices, image scanning uses Expo Camera's image barcode scanner. The app does not open decoded links.
+To learn more about developing your project with Expo, look at the following resources:
 
-The interface loads Orbitron for prominent headings and Montserrat for general text using Expo Google Fonts packages. System fonts are used as a fallback while the custom fonts load.
+- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
+- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
 
-## Link checks and privacy
+## Join the community
 
-The app submits decoded HTTP(S) QR destinations to the SafeScan scanner service configured in `hooks/useURLScanner.ts`. The service may check links against Google Safe Browsing. A scan is not a guarantee that a link is safe, and SafeScan does not open the destination.
+Join our community of developers creating universal apps.
 
-Scan history is stored locally with the hostname, verdict, check names, and check statuses. URL paths, query parameters, fragments, and evidence details are not saved in history. Product barcode identifiers (EAN/UPC) are stored; other decoded QR/barcode content is not. Opening a historical report shows that it is old; rescanning a link from history checks the saved domain root.
-
-The app supports both the current aggregated scanner response and the service's legacy verdict response. When the service returns only a verdict, the app does not invent individual checks or show its numerical score. Missing checks are shown as unavailable.
-
-## Quality checks
-
-```bash
-npx tsc --noEmit
-npm run lint
-```
+- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
+- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
