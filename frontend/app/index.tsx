@@ -1,18 +1,3 @@
-<<<<<<< HEAD
-import { useFonts } from 'expo-font';
-import { useCameraPermissions } from 'expo-camera';
-import { Orbitron_900Black } from '@expo-google-fonts/orbitron';
-import { ShareTechMono_400Regular } from '@expo-google-fonts/share-tech-mono';
-import { StatusBar, View, Text, Pressable } from 'react-native';
-import styles from './styles';
-import COLORS from '../constants/colors';
-import useQRScanner from '../hooks/useQRScanner';
-import Navbar from '../components/Navbar';
-import ScannerFrame from '../components/ScannerFrame';
-import ResultCard from '../components/ResultCard';
-import ActionButtons from '../components/ActionButtons';
-import BottomNav from '../components/BottomNav';
-=======
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
@@ -267,7 +252,6 @@ function levelColor(level: ThreatLevel, colors: ColorPalette) {
   if (level === 'malicious') return colors.red;
   return colors.muted;
 }
->>>>>>> 4bd5891280e0407291b248490b3cc21e0f797f37
 
 export default function Scanner() {
   const [fontsLoaded] = useFonts({ Orbitron_900Black, ShareTechMono_400Regular });
@@ -275,10 +259,6 @@ export default function Scanner() {
 
   const { scannedUrl, scanResult, handleScan } = useQRScanner();
 
-<<<<<<< HEAD
-  if (!fontsLoaded) return <View style={styles.container} />;
-  if (!permission) return <View style={styles.container} />;
-=======
   useEffect(() => {
     let mounted = true;
     AsyncStorage.multiGet([HISTORY_KEY, APPEARANCE_KEY])
@@ -591,18 +571,9 @@ export default function Scanner() {
       (check.threatLevel === 'unknown'
         ? 'This check did not return a result. It is not counted as a pass.'
         : 'No additional evidence details were provided by the scanner.');
->>>>>>> 4bd5891280e0407291b248490b3cc21e0f797f37
 
   if (!permission.granted) {
     return (
-<<<<<<< HEAD
-      <View style={[styles.container, styles.centered]}>
-        <StatusBar barStyle="light-content" backgroundColor={COLORS.bg} />
-        <Text style={styles.navLogo}>SAFESCAN</Text>
-        <Text style={[styles.textSecondary, { textAlign: 'center', marginVertical: 20 }]}>Camera access is required to scan QR codes.</Text>
-        <Pressable style={styles.btnPrimary} onPress={requestPermission}>
-          <Text style={styles.btnPrimaryText}>ENABLE CAMERA</Text>
-=======
       <Pressable
         key={key}
         onPress={() => toggleCheck(check.checkName, index)}
@@ -941,7 +912,6 @@ export default function Scanner() {
         >
           <AppIcon name="camera-outline" color="#FFFFFF" size={19} />
           <Text style={styles.primaryButtonText}>Scan another code</Text>
->>>>>>> 4bd5891280e0407291b248490b3cc21e0f797f37
         </Pressable>
       </View>
     );
