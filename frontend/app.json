@@ -41,8 +41,8 @@
         "expo-camera",
         {
           "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera",
-          "microphonePermission": false,
-          "recordAudioAndroid": false,
+          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone",
+          "recordAudioAndroid": true,
           "barcodeScannerEnabled": true
         }
       ],
