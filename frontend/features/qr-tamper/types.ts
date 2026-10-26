@@ -1,22 +1,22 @@
-export interface GlossMeasurements {
-  qr_highlight_fraction_off: number;
-  qr_highlight_fraction_on: number;
-  qr_new_highlight_fraction: number;
-  sticker_border_highlight_fraction_off: number;
-  sticker_border_highlight_fraction_on: number;
-  sticker_border_new_highlight_fraction: number;
-  background_highlight_fraction_off: number;
-  background_highlight_fraction_on: number;
-  background_new_highlight_fraction: number;
-  response_index: number;
-  qr_mean_value_off: number;
-  qr_mean_value_on: number;
-  background_mean_value_off: number;
-  background_mean_value_on: number;
-  rectified_mean_value_off: number;
-  rectified_mean_value_on: number;
-  rectified_highlight_fraction_off: number;
-  rectified_highlight_fraction_on: number;
+export interface ShadowMeasurements {
+  mode: 'textured_gray' | 'white_or_low_texture';
+  activeCheck: 'gray_dark_box' | 'white_boundary';
+  candidate: boolean;
+  insideQrMedianGradient: number;
+  insideQrLowGradientFraction: number;
+  outerAnnulusMedianGradient: number;
+  outerAnnulusLowGradientFraction: number;
+  lowGradientFractionDelta: number;
+  texturedBackground: boolean;
+  grayDarkBoxPassed: boolean;
+  whiteBoundaryCoverage: number;
+  whiteBoundarySideCoverage: [number, number, number, number];
+  whiteBoundarySideGradient: [number, number, number, number];
+  whiteBoundarySideContrast: [number, number, number, number];
+  whiteBoundaryEdgeStrength: number;
+  whiteBoundaryBackgroundGradient: number;
+  whiteBoundaryGradientExcess: number;
+  whiteBoundaryPassed: boolean;
 }
 
 export interface PolygonPoint {
@@ -31,12 +31,11 @@ export interface TamperTrial {
   capturedAt: string;
   status: 'complete' | 'inconclusive' | 'unavailable';
   predictedSticker: boolean | null;
-  responseIndex: number | null;
   captureMs: number;
   processingMs: number;
   totalMs: number;
   message?: string;
-  measurements?: GlossMeasurements;
+  measurements?: ShadowMeasurements;
   feedback: TamperFeedback;
 }
 

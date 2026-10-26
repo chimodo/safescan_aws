@@ -123,7 +123,7 @@ export default function DeveloperMetricsScreen({
         </Pressable>
         <Text style={{ color: colors.navy, fontSize: 27, fontWeight: '800' }} variant="heading">Sticker diagnostics</Text>
         <Text style={{ color: colors.secondaryText, fontSize: 13, lineHeight: 19, marginTop: 7 }}>
-          On-device OpenCV measurements over time. Images are not saved. This experimental glare response is not a probability or a validated sticker detector.
+          On-device OpenCV boundary measurements over time. Images are not saved. This experimental check is not a validated sticker detector.
         </Text>
       </View>
 
@@ -168,13 +168,12 @@ export default function DeveloperMetricsScreen({
             <View style={{ flex: 1 }}>
               <Text style={{ color: colors.navy, fontSize: 13, fontWeight: '700' }}>
                 {trial.status === 'complete'
-                  ? trial.predictedSticker ? 'Elevated sticker/gloss signal' : 'No elevated signal'
+                  ? trial.predictedSticker ? 'Elevated QR-edge signal' : 'No elevated signal'
                   : trial.status === 'inconclusive' ? 'Inconclusive capture' : 'Analysis unavailable'}
               </Text>
               <Text style={{ color: colors.secondaryText, fontSize: 11, marginTop: 4 }}>{timestamp(trial.capturedAt)}</Text>
               {(trial.captureMs > 0 || trial.processingMs > 0) && (
                 <Text style={{ color: colors.secondaryText, fontSize: 11, marginTop: 5 }}>
-                  {trial.responseIndex !== null ? `Response index ${trial.responseIndex.toFixed(5)} · ` : ''}
                   Capture {trial.captureMs.toFixed(0)} ms · OpenCV {trial.processingMs.toFixed(1)} ms · total {trial.totalMs.toFixed(0)} ms
                 </Text>
               )}
@@ -187,8 +186,8 @@ export default function DeveloperMetricsScreen({
             />
           </View>
           {trial.measurements && (
-            <Text style={{ color: colors.secondaryText, fontSize: 10, lineHeight: 15, marginTop: 8 }}>
-              QR new highlights {trial.measurements.qr_new_highlight_fraction.toFixed(5)} · border {trial.measurements.sticker_border_new_highlight_fraction.toFixed(5)} · background {trial.measurements.background_new_highlight_fraction.toFixed(5)}
+            <Text style={{ color: colors.secondaryText, fontSize: 10, lineHeight: 15, marginTop: 5 }}>
+              Sobel {trial.measurements.mode.replace('_', ' ')} · inside median {trial.measurements.insideQrMedianGradient.toFixed(2)} · annulus median {trial.measurements.outerAnnulusMedianGradient.toFixed(2)} · low-gradient delta {trial.measurements.lowGradientFractionDelta.toFixed(3)} · boundary coverage {trial.measurements.whiteBoundaryCoverage.toFixed(2)} · gradient excess {trial.measurements.whiteBoundaryGradientExcess.toFixed(2)}
             </Text>
           )}
           {trial.status === 'complete' && <TrialFeedback trial={trial} onFeedback={onFeedback} colors={colors} />}

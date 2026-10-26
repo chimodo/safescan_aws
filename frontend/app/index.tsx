@@ -578,11 +578,10 @@ export default function Scanner() {
         let capture: TamperCapture;
         try {
           capture = cameraScannerRef.current
-            ? await cameraScannerRef.current.runTamperCheck(code.cornerPoints)
+            ? await cameraScannerRef.current.runTamperCheck(code.data)
             : {
             status: 'unavailable' as const,
             predictedSticker: null,
-            responseIndex: null,
             captureMs: 0,
             processingMs: 0,
             totalMs: 0,
@@ -592,7 +591,6 @@ export default function Scanner() {
           capture = {
             status: 'unavailable',
             predictedSticker: null,
-            responseIndex: null,
             captureMs: 0,
             processingMs: 0,
             totalMs: 0,

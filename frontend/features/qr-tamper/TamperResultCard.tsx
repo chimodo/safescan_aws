@@ -17,7 +17,7 @@ export default function TamperResultCard({
   const elevated = trial.status === 'complete' && trial.predictedSticker;
   const tint = elevated ? colors.amberLight : colors.paleBlue;
   const title = trial.status === 'complete'
-    ? elevated ? 'Possible sticker or glossy surface' : 'No elevated glare signal'
+    ? elevated ? 'Possible QR sticker edge detected' : 'No elevated QR-edge pattern detected'
     : trial.status === 'inconclusive' ? 'Sticker check inconclusive' : 'Sticker check unavailable';
 
   return (
@@ -30,9 +30,9 @@ export default function TamperResultCard({
         />
         <Text style={{ flex: 1, color: colors.navy, fontSize: 14, fontWeight: '800' }}>{title}</Text>
       </View>
-      {trial.responseIndex !== null && (
-        <Text style={{ color: colors.secondaryText, fontSize: 12, marginTop: 8 }}>
-          Experimental response index: {trial.responseIndex.toFixed(5)} (not a probability)
+      {trial.measurements && (
+        <Text style={{ color: colors.secondaryText, fontSize: 12, marginTop: 5 }}>
+          Sobel {trial.measurements.mode.replace('_', ' ')} check: {trial.measurements.candidate ? 'elevated pattern' : 'no elevated pattern'}
         </Text>
       )}
       <Text style={{ color: colors.secondaryText, fontSize: 12, lineHeight: 18, marginTop: 8 }}>
