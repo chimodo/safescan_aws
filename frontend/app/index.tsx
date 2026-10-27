@@ -3,7 +3,7 @@ import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import { BarcodeScanningResult, useCameraPermissions } from 'expo-camera';
 import { StatusBar } from 'expo-status-bar';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppState,
   AccessibilityInfo,
@@ -24,15 +24,23 @@ import Text from '../components/AppText';
 import TextInput from '../components/AppTextInput';
 import type { IconName } from '../components/AppIcon';
 import CameraScanner from '../components/CameraScanner';
+import type { CameraScannerHandle } from '../components/CameraScanner';
+import { FontsLoadedContext } from '../components/FontsLoadedContext';
 import { ColorPalette, COLORS, DARK_COLORS } from '../constants/colors';
+import DeveloperMetricsScreen from '../features/qr-tamper/DeveloperMetricsScreen';
+import { calculateConfusionMetrics } from '../features/qr-tamper/metrics';
+import { loadTamperTrials, saveTamperTrials } from '../features/qr-tamper/storage';
+import TamperResultCard from '../features/qr-tamper/TamperResultCard';
+import type { TamperCapture, TamperFeedback, TamperTrial } from '../features/qr-tamper/types';
 import { scanCodeImage } from '../hooks/scanCodeImage';
 import { scanURL } from '../hooks/useURLScanner';
 import { ScanReport, StoredScan, ThreatLevel } from '../types';
 
 type Tab = 'home' | 'history' | 'settings';
-type Screen = Tab | 'scanning' | 'result' | 'report' | 'code';
+type Screen = Tab | 'scanning' | 'result' | 'report' | 'code' | 'developer';
 type AppearancePreference = 'system' | 'light' | 'dark';
 type ActiveCode = { value: string; type: string; scannedAt: string; historical?: boolean };
+type PendingCode = Pick<BarcodeScanningResult, 'data' | 'type' | 'cornerPoints'>;
 type ModalContent = {
   title: string;
   body: string;
@@ -253,11 +261,107 @@ function levelColor(level: ThreatLevel, colors: ColorPalette) {
   return colors.muted;
 }
 
-export default function Scanner() {
-  const [fontsLoaded] = useFonts({ Orbitron_900Black, ShareTechMono_400Regular });
-  const [permission, requestPermission] = useCameraPermissions();
+function HistoryItem({
+  entry,
+  colors,
+  styles,
+  compact = false,
+  onPress,
+}: {
+  entry: StoredScan;
+  colors: ColorPalette;
+  styles: ReturnType<typeof createStyles>;
+  compact?: boolean;
+  onPress: () => void;
+}) {
+  const title = entry.displayValue;
+  const status = verdictLabel(entry.finalVerdict);
+  return (
+    <Pressable onPress={onPress} accessibilityRole="button" style={styles.recentRow}>
+      <View style={[styles.recentIcon, { backgroundColor: colors.surface2 }]}>
+        <AppIcon
+          name={entry.scanType === 'barcode' ? 'barcode-outline' : 'globe-outline'}
+          size={17}
+          color={levelColor(entry.finalVerdict, colors)}
+        />
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={styles.recentDomain} numberOfLines={1}>{title}</Text>
+        {!compact && <Text style={styles.historyTime}>{barcodeTypeLabel(entry.barcodeType ?? 'qr')} · {entry.checks.length} checks</Text>}
+        <Text style={styles.recentTime}>{formatRelativeTime(entry.scannedAt)}</Text>
+      </View>
+      <Text style={[styles.recentStatus, { backgroundColor: colors.surface2, color: levelColor(entry.finalVerdict, colors) }]}>{status}</Text>
+    </Pressable>
+  );
+}
 
-  const { scannedUrl, scanResult, handleScan } = useQRScanner();
+function SettingRow({
+  icon,
+  title,
+  subtitle,
+  colors,
+  styles,
+  onPress,
+}: {
+  icon: IconName;
+  title: string;
+  subtitle: string;
+  colors: ColorPalette;
+  styles: ReturnType<typeof createStyles>;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable onPress={onPress} accessibilityRole="button" style={styles.settingRow}>
+      <View style={styles.settingIcon}><AppIcon name={icon} size={18} color={colors.navy} /></View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.settingTitle}>{title}</Text>
+        <Text style={styles.settingSubtext}>{subtitle}</Text>
+      </View>
+      <AppIcon name="chevron-forward" size={17} color={colors.muted} />
+    </Pressable>
+  );
+}
+
+export default function Scanner() {
+  const fontsLoaded = useContext(FontsLoadedContext);
+  const systemScheme = useColorScheme();
+  const [appearance, setAppearance] = useState<AppearancePreference>('system');
+  const isDark = appearance === 'dark' || (appearance === 'system' && systemScheme === 'dark');
+  const colors: ColorPalette = isDark ? DARK_COLORS : COLORS;
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const [permission, requestPermission, getPermission] = useCameraPermissions();
+  const [screen, setScreen] = useState<Screen>('home');
+  const [url, setUrl] = useState('');
+  const [activeScan, setActiveScan] = useState<ScanReport | null>(null);
+  const [activeCode, setActiveCode] = useState<ActiveCode | null>(null);
+  const [isHistoricalReport, setIsHistoricalReport] = useState(false);
+  const [history, setHistory] = useState<StoredScan[]>([]);
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyFilter, setHistoryFilter] = useState<'all' | ThreatLevel>('all');
+  const [toast, setToast] = useState('');
+  const [modal, setModal] = useState<ModalContent | null>(null);
+  const [expandedChecks, setExpandedChecks] = useState<string[]>([]);
+  const [pendingCode, setPendingCode] = useState<PendingCode | null>(null);
+  const [galleryBusy, setGalleryBusy] = useState(false);
+  const [tamperBusy, setTamperBusy] = useState(false);
+  const [tamperTrials, setTamperTrials] = useState<TamperTrial[]>([]);
+  const [activeTamper, setActiveTamper] = useState<TamperTrial | null>(null);
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const pendingCodeRef = useRef<PendingCode | null>(null);
+  const rejectedCodeRef = useRef<string | null>(null);
+  const scanLock = useRef(false);
+  const cameraScannerRef = useRef<CameraScannerHandle>(null);
+  const [appState, setAppState] = useState<AppStateStatus>(
+    AppState.currentState === 'background' ? 'background' : 'active',
+  );
+
+  const currentTab: Tab = screen === 'history' || screen === 'settings'
+    ? screen
+    : screen === 'developer'
+      ? 'settings'
+      : (screen === 'report' || screen === 'code') && isHistoricalReport
+        ? 'history'
+        : 'home';
 
   useEffect(() => {
     let mounted = true;
@@ -286,6 +390,21 @@ export default function Scanner() {
   }, []);
 
   useEffect(() => {
+    let mounted = true;
+    loadTamperTrials()
+      .then((trials) => {
+        if (mounted) setTamperTrials(trials);
+      })
+      .catch((error) => {
+        if (mounted) {
+          const message = error instanceof Error ? error.message : 'Sticker diagnostics could not be loaded.';
+          setToast(message);
+        }
+      });
+    return () => { mounted = false; };
+  }, []);
+
+  useEffect(() => {
     if (!toast) return;
     const timeout = setTimeout(() => setToast(''), 3600);
     return () => clearTimeout(timeout);
@@ -309,10 +428,6 @@ export default function Scanner() {
     return () => subscription.remove();
   }, [getPermission]);
 
-  const currentTab: Tab = screen === 'history' || screen === 'settings'
-    ? screen
-    : (screen === 'report' || screen === 'code') && isHistoricalReport ? 'history' : 'home';
-
   const persistHistory = async (nextHistory: StoredScan[]) => {
     setHistory(nextHistory);
     try {
@@ -322,7 +437,49 @@ export default function Scanner() {
     }
   };
 
-  const startScan = async (providedUrl = url) => {
+  const storeTamperTrial = async (capture: TamperCapture) => {
+    const trial: TamperTrial = {
+      ...capture,
+      id: historyId('tamper'),
+      capturedAt: new Date().toISOString(),
+      feedback: null,
+    };
+    const nextTrials = [trial, ...tamperTrials].slice(0, 500);
+    setTamperTrials(nextTrials);
+    setActiveTamper(trial);
+    try {
+      await saveTamperTrials(nextTrials);
+    } catch {
+      setToast('The sticker check finished, but its diagnostics could not be saved on this device.');
+    }
+    return trial;
+  };
+
+  const updateTamperFeedback = async (id: string, feedback: TamperFeedback) => {
+    const nextTrials = tamperTrials.map((trial) =>
+      trial.id === id ? { ...trial, feedback } : trial,
+    );
+    setTamperTrials(nextTrials);
+    const active = nextTrials.find((trial) => trial.id === activeTamper?.id);
+    if (active) setActiveTamper(active);
+    try {
+      await saveTamperTrials(nextTrials);
+    } catch {
+      setToast('Your feedback could not be saved on this device.');
+    }
+  };
+
+  const clearTamperTrials = async () => {
+    setTamperTrials([]);
+    setActiveTamper(null);
+    try {
+      await saveTamperTrials([]);
+    } catch {
+      setToast('Sticker diagnostics could not be cleared from this device.');
+    }
+  };
+
+  const startScan = async (providedUrl = url, preserveTamperTrial = false) => {
     const parsed = parseUserUrl(providedUrl);
     if (!parsed) {
       setModal({ title: 'This link could not be checked', body: 'The QR code did not contain a valid web address. SafeScan will not open it.' });
@@ -334,6 +491,7 @@ export default function Scanner() {
     setExpandedChecks([]);
     setIsHistoricalReport(false);
     setActiveCode(null);
+    if (!preserveTamperTrial) setActiveTamper(null);
     pendingCodeRef.current = null;
     setPendingCode(null);
     setScreen('scanning');
@@ -361,7 +519,7 @@ export default function Scanner() {
     }
   };
 
-  const handleCodeDetected = (result: Pick<BarcodeScanningResult, 'data' | 'type'>) => {
+  const handleCodeDetected = (result: BarcodeScanningResult) => {
     const data = result.data.trim();
     if (!data || pendingCodeRef.current || scanLock.current) return;
     if (data.length > 4096) {
@@ -372,16 +530,17 @@ export default function Scanner() {
       return;
     }
     rejectedCodeRef.current = null;
-    const candidate = { data, type: result.type };
+    const candidate: PendingCode = { data, type: result.type, cornerPoints: result.cornerPoints };
     pendingCodeRef.current = candidate;
     setPendingCode(candidate);
+    setActiveTamper(null);
   };
 
   const processDecodedCode = (result: Pick<BarcodeScanningResult, 'data' | 'type'>) => {
     const webUrl = parseScannedWebUrl(result.data, result.type);
     if (webUrl) {
       setUrl(webUrl.toString());
-      void startScan(webUrl.toString());
+      void startScan(webUrl.toString(), true);
       return;
     }
 
@@ -404,7 +563,7 @@ export default function Scanner() {
     void persistHistory([historyItem, ...history].slice(0, 30));
   };
 
-  const confirmPendingCode = () => {
+  const confirmPendingCode = async () => {
     const code = pendingCodeRef.current;
     if (!code) {
       setToast('Align a QR code or barcode within the frame.');
@@ -413,8 +572,47 @@ export default function Scanner() {
     if (scanLock.current) return;
     scanLock.current = true;
     pendingCodeRef.current = null;
-    setPendingCode(null);
-    processDecodedCode(code);
+    try {
+      if (code.type.toLowerCase() === 'qr') {
+        setTamperBusy(true);
+        let capture: TamperCapture;
+        try {
+          capture = cameraScannerRef.current
+            ? await cameraScannerRef.current.runTamperCheck(code.data)
+            : {
+            status: 'unavailable' as const,
+            predictedSticker: null,
+            captureMs: 0,
+            processingMs: 0,
+            totalMs: 0,
+            message: 'The camera is not available for sticker analysis.',
+          };
+        } catch (error) {
+          capture = {
+            status: 'unavailable',
+            predictedSticker: null,
+            captureMs: 0,
+            processingMs: 0,
+            totalMs: 0,
+            message: error instanceof Error
+              ? error.message
+              : 'The sticker analysis could not complete on this device.',
+          };
+        }
+        const trial = await storeTamperTrial(capture);
+        if (trial.message) setToast(trial.message);
+      } else {
+        setActiveTamper(null);
+      }
+      setPendingCode(null);
+      processDecodedCode(code);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : 'The code could not be processed. Please try again.');
+      setPendingCode(null);
+    } finally {
+      setTamperBusy(false);
+      scanLock.current = false;
+    }
   };
 
   const resetCodeDetection = () => {
@@ -422,6 +620,7 @@ export default function Scanner() {
     rejectedCodeRef.current = null;
     pendingCodeRef.current = null;
     setPendingCode(null);
+    setTamperBusy(false);
   };
 
   const openGallery = async () => {
@@ -572,7 +771,6 @@ export default function Scanner() {
         ? 'This check did not return a result. It is not counted as a pass.'
         : 'No additional evidence details were provided by the scanner.');
 
-  if (!permission.granted) {
     return (
       <Pressable
         key={key}
@@ -599,13 +797,14 @@ export default function Scanner() {
   const renderHome = () => (
     <View style={styles.homeScreen}>
       <CameraScanner
+        ref={cameraScannerRef}
         active={appState === 'active' && !galleryBusy}
         permission={permission}
         requestPermission={requestPermission}
         colors={colors}
         styles={styles}
         reduceMotion={reduceMotion}
-        hasPendingCode={pendingCode !== null}
+        hasPendingCode={pendingCode !== null || tamperBusy}
         onCode={handleCodeDetected}
         onGallery={() => void openGallery()}
         galleryBusy={galleryBusy}
@@ -613,7 +812,7 @@ export default function Scanner() {
       />
       <Pressable
         onPress={confirmPendingCode}
-        disabled={galleryBusy}
+        disabled={galleryBusy || tamperBusy}
         accessibilityRole="button"
         accessibilityLabel={
           pendingCode
@@ -624,7 +823,7 @@ export default function Scanner() {
           styles.primaryButton,
           styles.homeScanButton,
           pressed ? { opacity: 0.88 } : null,
-          galleryBusy ? { opacity: 0.6 } : null,
+          galleryBusy || tamperBusy ? { opacity: 0.6 } : null,
         ]}
       >
         <AppIcon
@@ -633,7 +832,9 @@ export default function Scanner() {
           size={20}
         />
         <Text style={styles.primaryButtonText}>
-          {pendingCode
+          {tamperBusy
+            ? 'Checking sticker signal…'
+            : pendingCode
             ? parseScannedWebUrl(pendingCode.data, pendingCode.type) ? 'Verify Link' : 'View Scanned Code'
             : 'Scan QR Code'}
         </Text>
@@ -820,6 +1021,17 @@ export default function Scanner() {
 
       <View style={styles.settingsCard}>
         <SettingRow
+          icon="analytics-outline"
+          title="Developer mode"
+          subtitle={`${tamperTrials.length} sticker checks · local diagnostics`}
+          colors={colors}
+          styles={styles}
+          onPress={() => setScreen('developer')}
+        />
+      </View>
+
+      <View style={styles.settingsCard}>
+        <SettingRow
           icon="trash-outline"
           title="Clear scan history"
           subtitle={`${history.length} saved ${history.length === 1 ? 'scan' : 'scans'} on this device`}
@@ -830,6 +1042,17 @@ export default function Scanner() {
       </View>
       <Text style={[styles.privacyNote, { textAlign: 'center', marginTop: 7 }]}>SafeScan · Link checks are helpful, not infallible.</Text>
     </ScrollView>
+  );
+
+  const renderDeveloper = () => (
+    <DeveloperMetricsScreen
+      trials={tamperTrials}
+      metrics={calculateConfusionMetrics(tamperTrials)}
+      colors={colors}
+      onBack={() => setScreen('settings')}
+      onFeedback={(id, feedback) => void updateTamperFeedback(id, feedback)}
+      onClear={() => void clearTamperTrials()}
+    />
   );
 
   const renderScanning = () => {
@@ -886,6 +1109,9 @@ export default function Scanner() {
             This is decoded content, not a website security verdict. SafeScan did not open it or submit it to link analysis.
           </Text>
         </View>
+        {activeTamper && (
+          <TamperResultCard trial={activeTamper} colors={colors} onFeedback={(id, feedback) => void updateTamperFeedback(id, feedback)} />
+        )}
         <View style={styles.codeCard}>
           <Text style={styles.settingSubtext}>{barcodeTypeLabel(activeCode.type).toUpperCase()}</Text>
           <Text selectable style={styles.codeValue}>
@@ -913,18 +1139,284 @@ export default function Scanner() {
           <AppIcon name="camera-outline" color="#FFFFFF" size={19} />
           <Text style={styles.primaryButtonText}>Scan another code</Text>
         </Pressable>
-      </View>
+      </ScrollView>
     );
-  }
+  };
 
+  const renderResult = (detailed: boolean) => {
+    if (!activeScan) return null;
+    const presentation = verdictDetails(activeScan.finalVerdict, colors);
+    const parsedActiveUrl = parseUserUrl(activeScan.url);
+    const domain = parsedActiveUrl?.hostname ?? activeScan.url;
+    const expanded = detailed || screen === 'report';
+    const verdictSummary = activeScan.checks.length > 0
+      ? presentation.summary
+      : activeScan.finalVerdict === 'safe'
+        ? 'The scanner returned a no-known-threats result, but did not provide individual checks. No scan can guarantee that a link is safe.'
+        : presentation.summary;
+
+    return (
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <View style={styles.screenHeader}>
+          <Pressable onPress={() => setScreen(isHistoricalReport ? 'history' : 'home')} accessibilityRole="button" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 13 }}>
+            <AppIcon name="arrow-back" size={17} color={colors.secondaryText} />
+            <Text style={{ color: colors.secondaryText, fontSize: 13, fontWeight: '600' }}>{isHistoricalReport ? 'Back to history' : 'Back to scan'}</Text>
+          </Pressable>
+          {screen === 'report' && <Text style={styles.eyebrow}>{isHistoricalReport ? 'Historical report' : 'Full report'}</Text>}
+        </View>
+
+        <View style={[styles.verdictCard, { backgroundColor: presentation.tint }]}>
+          <View style={[styles.verdictIcon, { backgroundColor: colors.surface }]}>
+            <AppIcon name={presentation.icon} size={36} color={presentation.color} />
+          </View>
+          <Text style={styles.verdictTitle} variant="heading">{presentation.title}</Text>
+          <Text style={styles.verdictSummary}>{verdictSummary}</Text>
+        </View>
+
+        {activeTamper && (
+          <TamperResultCard trial={activeTamper} colors={colors} onFeedback={(id, feedback) => void updateTamperFeedback(id, feedback)} />
+        )}
+
+        <Pressable onPress={() => showUrlDetails(activeScan)} accessibilityRole="button" style={styles.domainCard}>
+          <View style={styles.domainRow}>
+            <AppIcon name="globe-outline" size={19} color={colors.secondaryText} />
+            <Text style={styles.domainText} numberOfLines={1}>{domain}</Text>
+            <AppIcon name="chevron-forward" size={17} color={colors.muted} />
+          </View>
+          <Text style={styles.domainSubtext}>
+            {activeScan.cached ? 'Retrieved' : 'Checked'} {formatTimestamp(activeScan.scannedAt)}
+            {activeScan.cached ? ' · Cached result' : ''}
+            {' · Tap for link details'}
+          </Text>
+        </Pressable>
+
+        {isHistoricalReport && (
+          <View style={[styles.banner, { backgroundColor: colors.paleBlue }]}>
+            <AppIcon name="time-outline" color={colors.navy} size={19} />
+            <Text style={[styles.bannerText, { flex: 1, marginTop: 0 }]}>
+              This is a saved result from {formatTimestamp(activeScan.scannedAt)}. History keeps only the domain, so checking again will scan the domain root—not the original path or query.
+            </Text>
+          </View>
+        )}
+
+        <View style={styles.quickSection}>
+          <View style={styles.sectionHeadingRow}>
+            <Text style={styles.sectionTitle} variant="heading">Security checks</Text>
+            <Pressable
+              onPress={() => setModal({
+                title: 'Why this result?',
+                body: `This status comes from the SafeScan service. ${activeScan.checks.length > 0
+                  ? `${activeScan.checks.length} individual check results are listed below; tap a check to view any evidence the service returned.`
+                  : 'The service returned an overall verdict without individual check details.'} SafeScan does not display an unverified numerical safety score.`,
+              })}
+              accessibilityRole="button"
+            >
+              <Text style={styles.sectionAction}>Why this result?</Text>
+            </Pressable>
+          </View>
+          {activeScan.checks.length > 0
+            ? activeScan.checks.map(renderCheck)
+            : (
+              <View style={styles.banner}>
+                <AppIcon name="help-circle-outline" color={colors.secondaryText} />
+                <Text style={styles.bannerText}>No individual check details were returned by the scanner.</Text>
+              </View>
+            )}
+        </View>
+
+        <View style={[styles.banner, { backgroundColor: presentation.tint }]}>
+          <AppIcon name={activeScan.finalVerdict === 'malicious' ? 'shield' : 'bulb-outline'} color={presentation.color} size={20} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.bannerTitle}>{activeScan.finalVerdict === 'malicious' ? 'Recommended action' : 'Keep this in mind'}</Text>
+            <Text style={styles.bannerText}>{presentation.action}</Text>
+          </View>
+        </View>
+
+        {expanded && (
+          <>
+            <View style={styles.quickSection}>
+              <View style={styles.sectionHeadingRow}><Text style={styles.sectionTitle} variant="heading">URL and domain</Text></View>
+              <View style={styles.domainCard}>
+                <Text style={styles.settingSubtext}>HOSTNAME</Text>
+                <Text selectable style={[styles.domainText, { marginTop: 4 }]}>{domain}</Text>
+                <Text style={[styles.settingSubtext, { marginTop: 13 }]}>PROTOCOL</Text>
+                <Text style={[styles.domainText, { marginTop: 4 }]}>{parsedActiveUrl?.protocol.replace(':', '') ?? 'Not available'}</Text>
+                <Text style={[styles.settingSubtext, { marginTop: 13 }]}>PATH</Text>
+                <Text selectable style={[styles.domainText, { marginTop: 4 }]} numberOfLines={2}>{parsedActiveUrl?.pathname ?? 'Not available'}</Text>
+                <Text style={[styles.settingSubtext, { marginTop: 13 }]}>QUERY PARAMETERS</Text>
+                <Text style={[styles.domainText, { marginTop: 4 }]}>{parsedActiveUrl?.search ? 'Present; values hidden' : 'None'}</Text>
+                {domain.startsWith('xn--') || domain.includes('.xn--') ? (
+                  <View style={[styles.banner, { backgroundColor: colors.amberLight }]}>
+                    <AppIcon name="warning" size={18} color={colors.amber} />
+                    <Text style={styles.bannerText}>This hostname contains an internationalized domain label. Review the exact spelling carefully.</Text>
+                  </View>
+                ) : null}
+              </View>
+            </View>
+            <View style={[styles.banner, { backgroundColor: colors.paleBlue }]}>
+              <AppIcon name="information-circle-outline" color={colors.navy} size={20} />
+              <Text style={[styles.bannerText, { flex: 1, marginTop: 0 }]}>Redirect and domain metadata are included only when the scanner returns them. SafeScan does not infer missing details.</Text>
+            </View>
+          </>
+        )}
+
+        {!!activeScan.serviceMessage && (
+          <View style={[styles.banner, { backgroundColor: colors.paleBlue }]}>
+            <AppIcon name="information-circle-outline" color={colors.navy} size={20} />
+            <Text style={[styles.bannerText, { flex: 1, marginTop: 0 }]}>{activeScan.serviceMessage}</Text>
+          </View>
+        )}
+
+        <View style={styles.reportActionRow}>
+          {!expanded && (
+            <Pressable onPress={() => setScreen('report')} style={[styles.primaryButton, styles.reportButton]} accessibilityRole="button">
+              <AppIcon name="document-text-outline" color="#FFFFFF" size={17} />
+              <Text style={styles.primaryButtonText}>View full report</Text>
+            </Pressable>
+          )}
+          <Pressable onPress={() => void shareResult()} style={[styles.secondaryButton, styles.reportButton]} accessibilityRole="button">
+            <AppIcon name="share-outline" color={colors.navy} size={17} />
+            <Text style={styles.secondaryButtonText}>Share</Text>
+          </Pressable>
+        </View>
+        <Pressable
+          onPress={() => {
+            if (isHistoricalReport) void startScan(activeScan.url);
+            else {
+              setActiveScan(null);
+              setUrl('');
+              setScreen('home');
+            }
+          }}
+          style={[styles.primaryButton, { marginTop: 10, backgroundColor: presentation.color }]}
+          accessibilityRole="button"
+        >
+          <AppIcon name="refresh-outline" color="#FFFFFF" size={18} />
+          <Text style={styles.primaryButtonText}>{isHistoricalReport ? 'Check this domain again' : 'Scan another link'}</Text>
+        </Pressable>
+      </ScrollView>
+    );
+  };
+
+  const renderCurrentScreen = () => {
+    switch (screen) {
+      case 'history': return renderHistory();
+      case 'settings': return renderSettings();
+      case 'developer': return renderDeveloper();
+      case 'scanning': return renderScanning();
+      case 'code': return renderCodeResult();
+      case 'result': return renderResult(false);
+      case 'report': return renderResult(true);
+      default: return renderHome();
+    }
+  };
+
+  if (!fontsLoaded) return null;
   return (
-    <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.bg} />
-      <Navbar />
-      <ScannerFrame onScan={handleScan} />
-      <ResultCard url={scannedUrl} result={scanResult} />
-      <ActionButtons />
-      <BottomNav />
+    <View style={styles.safeArea}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+      <View style={styles.page}>
+        <View style={styles.topBar}>
+          <View style={styles.brand}>
+            <View style={styles.brandIcon}><AppIcon name="shield-checkmark" color={colors.green} size={22} /></View>
+            <Text style={styles.brandName} variant="heading">SafeScan</Text>
+          </View>
+          <Pressable onPress={() => setScreen('settings')} accessibilityRole="button" accessibilityLabel="Open settings" style={styles.topAction}>
+            <AppIcon name="settings-outline" size={19} color={colors.navy} />
+          </Pressable>
+        </View>
+
+        <View style={{ flex: 1 }}>{renderCurrentScreen()}</View>
+
+        {screen !== 'scanning' && (
+          <View style={styles.bottomNav}>
+            {([
+              { tab: 'home' as const, icon: 'home-outline' as const, label: 'Home' },
+              { tab: 'history' as const, icon: 'time-outline' as const, label: 'History' },
+              { tab: 'settings' as const, icon: 'settings-outline' as const, label: 'Settings' },
+            ]).map((item) => {
+              const selected = currentTab === item.tab;
+              return (
+                <Pressable
+                  key={item.tab}
+                  onPress={() => {
+                    if (item.tab === 'home') resetCodeDetection();
+                    setScreen(item.tab);
+                  }}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected }}
+                  style={styles.navItem}
+                >
+                  <AppIcon name={selected && item.tab === 'home' ? 'home' : item.icon} size={20} color={selected ? colors.green : colors.muted} />
+                  <Text style={[styles.navLabel, { color: selected ? colors.green : colors.secondaryText }]}>{item.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
+      </View>
+
+      {!!toast && (
+        <View style={{ pointerEvents: 'box-none', position: 'absolute', left: 20, right: 20, bottom: 85, maxWidth: 570, alignSelf: 'center' }}>
+          <View accessibilityLiveRegion="polite" style={styles.toast}><Text style={styles.toastText}>{toast}</Text></View>
+        </View>
+      )}
+
+      <Modal visible={modal !== null} transparent animationType={reduceMotion ? 'none' : 'slide'} onRequestClose={() => setModal(null)}>
+        <View style={[styles.modalBackdrop, Platform.OS === 'web' ? { justifyContent: 'center', paddingHorizontal: 20 } : null]}>
+          <Pressable
+            style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
+            onPress={() => setModal(null)}
+            accessibilityRole="button"
+            accessibilityLabel="Close dialog"
+          />
+          <View style={[styles.modalSheet, Platform.OS === 'web' ? { width: '100%', maxWidth: 520, alignSelf: 'center', borderRadius: 25 } : null]} accessibilityViewIsModal>
+            <View style={styles.modalHandle} />
+            <View style={styles.modalTitleRow}>
+              <Text style={styles.modalTitle} variant="heading">{modal?.title}</Text>
+              <Pressable onPress={() => setModal(null)} accessibilityRole="button" accessibilityLabel="Close">
+                <AppIcon name="close" color={colors.secondaryText} size={23} />
+              </Pressable>
+            </View>
+            <Text style={styles.modalText}>{modal?.body}</Text>
+            {modal?.url && (
+              <>
+                <Text selectable style={styles.modalUrl}>{modal.url}</Text>
+                <Pressable
+                  onPress={async () => {
+                    try {
+                      await Clipboard.setStringAsync(modal.url ?? '');
+                      setToast('Link copied.');
+                      setModal(null);
+                    } catch {
+                      setToast('Could not copy this link.');
+                    }
+                  }}
+                  style={[styles.secondaryButton, { marginTop: 16 }]}
+                  accessibilityRole="button"
+                >
+                  <AppIcon name="copy-outline" size={17} color={colors.navy} />
+                  <Text style={styles.secondaryButtonText}>Copy link</Text>
+                </Pressable>
+              </>
+            )}
+            {modal?.kind === 'clear-history' ? (
+              <View style={styles.reportActionRow}>
+                <Pressable onPress={() => setModal(null)} style={[styles.secondaryButton, styles.reportButton]} accessibilityRole="button">
+                  <Text style={styles.secondaryButtonText}>Cancel</Text>
+                </Pressable>
+                <Pressable onPress={() => void clearHistory()} style={[styles.primaryButton, styles.reportButton, { backgroundColor: colors.red }]} accessibilityRole="button">
+                  <Text style={styles.primaryButtonText}>Clear history</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <Pressable onPress={() => setModal(null)} style={[styles.primaryButton, { marginTop: 18 }]} accessibilityRole="button">
+                <Text style={styles.primaryButtonText}>Got it</Text>
+              </Pressable>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
