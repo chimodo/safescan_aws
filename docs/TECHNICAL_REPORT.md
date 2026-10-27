@@ -55,7 +55,7 @@ The sticker check runs on the phone in `frontend/features/qr-tamper/` (`opencv.n
 
 The algorithm uses core OpenCV operations: perspective transform, Sobel gradients and percentile statistics.
 
-The detector was first written in Python with OpenCV ([the original Python detector](PYTHON_CODE_LINK)), then ported to TypeScript for the phone. The Python version is the reference implementation, and the easiest way to try the method: **we encourage judges to run it on their own photos of QR codes, with and without a sticker over them.** Its development followed the experiment plan in `examples/ANALYSIS_AGENT_INSTRUCTIONS.md`, which compares masking, global and adaptive thresholds, Canny, Sobel and contour filtering.
+The detector was first written in Python with OpenCV, then ported to TypeScript for the phone. Its development followed the experiment plan in `examples/ANALYSIS_AGENT_INSTRUCTIONS.md`, which compares masking, global and adaptive thresholds, Canny, Sobel and contour filtering. Judges can try the method on their own QR codes through the app's sticker check; Developer mode in Settings shows each measurement.
 
 ## 5. AWS deployment
 
@@ -104,7 +104,7 @@ Tested end to end on the deployed stack: a report submitted through the website 
 
 ### Sticker check
 
-**The Python detector passed all test cases in our labelled set of 17 images** of QR codes with and without stickers (two examples are in `examples/`). A set this small shows the method works, but it can't give a reliable accuracy rate for the wider world, so we encourage judges to test [the original Python detector](PYTHON_CODE_LINK) on their own images.
+**The Python detector passed all test cases in our labelled set of 17 images** of QR codes with and without stickers (two examples are in `examples/`). A set this small shows the method works, but it can't give a reliable accuracy rate for the wider world.
 
 **The React Native port is less accurate than the Python detector.** It does worst on the hardest case, a white sticker on white paper, where the edge and shadow signal is close to the noise. To measure the port, the app records each sticker check with optional user feedback ("sticker present or not"), and the Developer mode screen computes a confusion matrix from those trials.
 

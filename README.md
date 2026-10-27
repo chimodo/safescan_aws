@@ -8,7 +8,6 @@ SafeScan checks a QR code before you open it. Point the phone at a code and Safe
 | Scan API (live) | `POST https://hggnmfb55rkvypwevw5owgj3y40srnpp.lambda-url.us-east-1.on.aws/scan` |
 | Technical report | [docs/TECHNICAL_REPORT.md](docs/TECHNICAL_REPORT.md) |
 | Evaluation results | [docs/eval/results.md](docs/eval/results.md) |
-| Sticker detector (Python, try it on your own images) | PYTHON_CODE_LINK |
 | API contract | [backend/scan-lambda/API.md](backend/scan-lambda/API.md) |
 
 Try the API without the app:
