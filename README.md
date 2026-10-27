@@ -103,17 +103,18 @@ Every Node project commits its `package-lock.json`, so `npm ci` installs the exa
 
 ### App (Android)
 
-The sticker check and the share screen use native modules, so the app needs a development build; Expo Go can't run them.
+The sticker check and the share screen use native modules, so the app needs its own build; Expo Go can't run them.
 
 ```sh
 cd frontend
 npm ci
 npx eas-cli login
-npx eas-cli build --profile development --platform android   # installable APK, about 15 minutes
-npx expo start --dev-client                                   # then open the installed app and scan the QR code
+npx eas-cli build --profile preview --platform android   # standalone APK (internal distribution), about 15 minutes
 ```
 
-To build on a connected device instead of in the cloud: `npx expo run:android`. The app calls the live API by default; set `EXPO_PUBLIC_SCAN_URL` and `EXPO_PUBLIC_COMMUNITY_URL` in `frontend/.env` to point it elsewhere (see `frontend/.env.example`).
+Open the build link on an Android phone to install the APK. It runs on its own, with no laptop or dev server.
+
+For development with live reload, build `--profile development` instead and run `npx expo start --dev-client`. To build on a connected device without the cloud: `npx expo run:android`. The app calls the live API by default; set `EXPO_PUBLIC_SCAN_URL` and `EXPO_PUBLIC_COMMUNITY_URL` in `frontend/.env` to point it elsewhere (see `frontend/.env.example`).
 
 ### Community website
 
