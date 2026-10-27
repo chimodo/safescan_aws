@@ -1,0 +1,244 @@
+{
+  "summary": {
+    "ranAt": "2026-10-27T06:18:29.344Z",
+    "api": "https://hggnmfb55rkvypwevw5owgj3y40srnpp.lambda-url.us-east-1.on.aws/",
+    "passed": 12,
+    "total": 15,
+    "medianFirstMs": 118,
+    "medianRepeatMs": 61,
+    "repeatCacheHits": 13,
+    "repeats": 13
+  },
+  "rows": [
+    {
+      "group": "Known threat (Google test page)",
+      "url": "http://testsafebrowsing.appspot.com/s/phishing.html",
+      "expected": 4,
+      "status": 200,
+      "level": 4,
+      "label": "Likely malicious",
+      "limited": false,
+      "reasons": [
+        "Google Safe Browsing: SOCIAL_ENGINEERING"
+      ],
+      "firstMs": 452,
+      "repeatMs": 152,
+      "repeatCached": true,
+      "pass": true
+    },
+    {
+      "group": "Known threat (Google test page)",
+      "url": "http://testsafebrowsing.appspot.com/s/malware.html",
+      "expected": 4,
+      "status": 200,
+      "level": 4,
+      "label": "Likely malicious",
+      "limited": false,
+      "reasons": [
+        "Google Safe Browsing: MALWARE"
+      ],
+      "firstMs": 118,
+      "repeatMs": 82,
+      "repeatCached": true,
+      "pass": true
+    },
+    {
+      "group": "Known threat (Google test page)",
+      "url": "http://testsafebrowsing.appspot.com/s/unwanted.html",
+      "expected": 4,
+      "status": 200,
+      "level": 4,
+      "label": "Likely malicious",
+      "limited": false,
+      "reasons": [
+        "Google Safe Browsing: UNWANTED_SOFTWARE"
+      ],
+      "firstMs": 118,
+      "repeatMs": 79,
+      "repeatCached": true,
+      "pass": true
+    },
+    {
+      "group": "Known threat (Google test page)",
+      "url": "http://testsafebrowsing.appspot.com/s/social_engineering_extended_report.html",
+      "expected": 4,
+      "status": 200,
+      "level": 1,
+      "label": "No known threats",
+      "limited": false,
+      "reasons": [],
+      "firstMs": 121,
+      "repeatMs": 62,
+      "repeatCached": true,
+      "pass": false
+    },
+    {
+      "group": "Popular site",
+      "url": "https://www.wikipedia.org/",
+      "expected": 1,
+      "status": 200,
+      "level": 1,
+      "label": "No known threats",
+      "limited": false,
+      "reasons": [],
+      "firstMs": 57,
+      "repeatMs": 60,
+      "repeatCached": true,
+      "pass": true
+    },
+    {
+      "group": "Popular site",
+      "url": "https://github.com/",
+      "expected": 1,
+      "status": 200,
+      "level": 1,
+      "label": "No known threats",
+      "limited": false,
+      "reasons": [],
+      "firstMs": 139,
+      "repeatMs": 59,
+      "repeatCached": true,
+      "pass": true
+    },
+    {
+      "group": "Popular site",
+      "url": "https://www.bbc.co.uk/news",
+      "expected": 1,
+      "status": 200,
+      "level": 1,
+      "label": "No known threats",
+      "limited": false,
+      "reasons": [],
+      "firstMs": 119,
+      "repeatMs": 65,
+      "repeatCached": true,
+      "pass": true
+    },
+    {
+      "group": "Popular site",
+      "url": "https://www.google.com/search?q=safescan&utm_source=qr",
+      "expected": 1,
+      "status": 200,
+      "level": 1,
+      "label": "No known threats",
+      "limited": false,
+      "reasons": [],
+      "firstMs": 138,
+      "repeatMs": 56,
+      "repeatCached": true,
+      "pass": true
+    },
+    {
+      "group": "Suspicious pattern (made up, not registered)",
+      "url": "http://192.168.4.20/bank/login",
+      "expected": 2,
+      "status": 200,
+      "level": 2,
+      "label": "Use caution",
+      "limited": false,
+      "reasons": [
+        "Uses an IP address instead of a domain name",
+        "Mentions login or payment"
+      ],
+      "firstMs": 119,
+      "repeatMs": 61,
+      "repeatCached": true,
+      "pass": true
+    },
+    {
+      "group": "Suspicious pattern (made up, not registered)",
+      "url": "https://paypal-secure-login.verify-account-update.xyz/signin",
+      "expected": 2,
+      "status": 200,
+      "level": 1,
+      "label": "No known threats",
+      "limited": false,
+      "reasons": [
+        "Uncommon domain ending .xyz",
+        "Mentions login or payment"
+      ],
+      "firstMs": 98,
+      "repeatMs": 60,
+      "repeatCached": true,
+      "pass": false
+    },
+    {
+      "group": "Suspicious pattern (made up, not registered)",
+      "url": "https://xn--pple-43d.com/id/login",
+      "expected": 2,
+      "status": 200,
+      "level": 2,
+      "label": "Use caution",
+      "limited": false,
+      "reasons": [
+        "Uses international characters that can imitate another domain",
+        "Mentions login or payment"
+      ],
+      "firstMs": 100,
+      "repeatMs": 60,
+      "repeatCached": true,
+      "pass": true
+    },
+    {
+      "group": "Suspicious pattern (made up, not registered)",
+      "url": "http://login-microsoftonline.com.account-verify.top/",
+      "expected": 2,
+      "status": 200,
+      "level": 1,
+      "label": "No known threats",
+      "limited": false,
+      "reasons": [
+        "Uncommon domain ending .top",
+        "Mentions login or payment"
+      ],
+      "firstMs": 124,
+      "repeatMs": 57,
+      "repeatCached": true,
+      "pass": false
+    },
+    {
+      "group": "Community-reported",
+      "url": "https://evil_site.com/",
+      "expected": 2,
+      "status": 200,
+      "level": 2,
+      "label": "Use caution",
+      "limited": false,
+      "reasons": [
+        "Shared 1 time by the SafeScan community"
+      ],
+      "firstMs": 58,
+      "repeatMs": 79,
+      "repeatCached": true,
+      "pass": true
+    },
+    {
+      "group": "Not a web link",
+      "url": "WIFI:S:CafeGuest;T:WPA;P:hunter22;;",
+      "expected": null,
+      "status": 400,
+      "level": null,
+      "label": "Body must include a valid http(s) url",
+      "limited": null,
+      "reasons": [],
+      "firstMs": 45,
+      "repeatMs": null,
+      "repeatCached": null,
+      "pass": true
+    },
+    {
+      "group": "Not a web link",
+      "url": "javascript:alert(1)",
+      "expected": null,
+      "status": 400,
+      "level": null,
+      "label": "Body must include a valid http(s) url",
+      "limited": null,
+      "reasons": [],
+      "firstMs": 53,
+      "repeatMs": null,
+      "repeatCached": null,
+      "pass": true
+    }
+  ]
+}
