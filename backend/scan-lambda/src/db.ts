@@ -1,5 +1,7 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import type { TamperWarning, ThreatType } from '../../../shared/community';
+import type { Screenshot } from './screenshots';
 
 // Adaptive retries back off when a provisioned table throttles,
 // which matters on the small free-tier capacity.
@@ -13,6 +15,7 @@ export const TABLES = {
   reports: process.env.TABLE_REPORTS!,
   hotspots: process.env.TABLE_HOTSPOTS!,
   rateLimits: process.env.TABLE_RATE_LIMITS!,
+  community: process.env.TABLE_COMMUNITY!,
 };
 
 // Global secondary indexes on Reports (names must match the CDK stack)
@@ -20,6 +23,7 @@ export const REPORT_INDEXES = {
   byUrl: 'byUrl', // urlHash + createdAt
   byArea: 'byArea', // geohash5 + createdAt
   byStatus: 'byStatus', // urlStatus + createdAt
+  byVisibility: 'byVisibility', // visibility + createdAt: the community home page's recent list
 };
 
 export type Verdict = 'SAFE' | 'SUSPICIOUS' | 'DANGEROUS';
@@ -37,24 +41,32 @@ export interface VerdictRow {
   ttl: number; // epoch seconds; DynamoDB cleanup only
 }
 
+/** Maintainer review state of the URL claim. Only maintainers and threat-database matches move it. */
 export type UrlStatus = 'pending' | 'corroborated' | 'verified' | 'rejected';
-export type TamperWarning = 'none' | 'possible' | 'likely';
-export type ReportCategory = 'sticker' | 'fake_login' | 'payment_or_personal_info' | 'other';
+/** Whether a submission shows on the community pages and counts toward the verdict level */
+export type Visibility = 'visible' | 'hidden';
 
-/** One row of Reports */
+/** One row of Reports: a community submission */
 export interface ReportRow {
   reportId: string;
-  urlHash: string;
-  url: string;
-  category: ReportCategory;
-  note?: string;
-  geohash5?: string;
+  urlHash: string; // computed by the Lambda, never trusted from the client
+  url: string; // as cleaned by shared/normalizeUrl
+  threatType?: ThreatType;
+  details?: string; // plain text, at most DETAILS_MAX_LENGTH characters
   tamperWarning: TamperWarning;
   urlStatus: UrlStatus;
-  needsReview?: boolean; // votes met the bar but the domain is on the protected list
+  visibility?: Visibility; // absent on reports made before the community features
+  helpfulVotes?: number;
+  /** One entry per upload slot; images stay hidden until a maintainer approves them */
+  screenshots?: Screenshot[];
+  needsReview?: boolean;
   installIdHash: string;
   ipHash: string;
   createdAt: string; // ISO 8601, sorts correctly as a string
+  /** Fields from the first report form (before the 26 Oct build instructions) */
+  category?: string;
+  note?: string;
+  geohash5?: string;
 }
 
 /** Build a UrlVerdicts row; ttl lags expiresAt by a day since it is cleanup only */

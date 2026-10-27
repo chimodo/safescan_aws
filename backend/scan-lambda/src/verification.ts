@@ -1,9 +1,7 @@
 import { QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { ddb, TABLES, REPORT_INDEXES, type ReportRow, type UrlStatus } from './db';
-import { CONFIG } from './config';
 import { getFreshVerdict } from './lookup';
-import { ALLOWLIST, PROTECTED_DOMAINS, hostMatches } from './domainLists';
-import { scoreHeuristics } from '../../../shared/heuristics';
+import { ALLOWLIST, hostMatches } from './domainLists';
 
 const RANK: Record<UrlStatus, number> = { rejected: -1, pending: 0, corroborated: 1, verified: 2 };
 
@@ -34,33 +32,31 @@ function distinctReporters(reports: ReportRow[]): number {
   );
 }
 
-export async function setStatus(report: ReportRow, urlStatus: UrlStatus, needsReview?: boolean) {
+export async function setStatus(report: ReportRow, urlStatus: UrlStatus) {
   await ddb.send(
     new UpdateCommand({
       TableName: TABLES.reports,
       Key: { reportId: report.reportId },
-      UpdateExpression: needsReview === undefined ? 'SET urlStatus = :s' : 'SET urlStatus = :s, needsReview = :r',
-      ExpressionAttributeValues: needsReview === undefined ? { ':s': urlStatus } : { ':s': urlStatus, ':r': needsReview },
+      UpdateExpression: 'SET urlStatus = :s',
+      ExpressionAttributeValues: { ':s': urlStatus },
     })
   );
 }
 
 /**
- * Applies the design's verification states to every report for one URL.
- * - verified: a Safe Browsing or feed match, or N distinct reporters within W plus heuristic score >= T
+ * Maintainer review state for one URL's reports. This is separate from the verdict level:
+ * community submissions and votes raise a link to level 2 or 3 (shared/verdict.ts decideLevel),
+ * and only this path can make it level 4 through a community report.
+ * - verified: a Safe Browsing or feed match, or maintainer approval (scripts/review.mts)
  * - corroborated: a second distinct reporter
- * - rejected: the domain is on the allowlist
- * Popular (protected) domains never auto-verify on votes; they're flagged for manual review.
- * Statuses only move up here; only maintainers move a URL down (scripts/review.mts).
+ * - rejected: the domain is on the allowlist, or a maintainer rejected it
+ * Votes and report counts never verify a URL by themselves.
  */
 export async function evaluateUrl(urlHash: string, now = Date.now()): Promise<UrlStatus | undefined> {
   const active = (await reportsForUrl(urlHash)).filter((r) => r.urlStatus !== 'rejected');
   if (active.length === 0) return undefined;
 
-  const url = active[0].url;
-  const host = new URL(url).hostname;
-
-  if (hostMatches(host, ALLOWLIST)) {
+  if (hostMatches(new URL(active[0].url).hostname, ALLOWLIST)) {
     await Promise.all(active.map((r) => setStatus(r, 'rejected')));
     return 'rejected';
   }
@@ -68,24 +64,10 @@ export async function evaluateUrl(urlHash: string, now = Date.now()): Promise<Ur
   const row = await getFreshVerdict(urlHash, now);
   const independentMatch = row?.verdict === 'DANGEROUS' && row.source !== 'community';
 
-  const since = new Date(now - CONFIG.verifyWindowMs).toISOString();
-  const recentReporters = distinctReporters(active.filter((r) => r.createdAt >= since));
-  const votesMet =
-    recentReporters >= CONFIG.verifyReporters && scoreHeuristics(url).score >= CONFIG.verifyHeuristicScore;
-  const isProtected = hostMatches(host, PROTECTED_DOMAINS);
-
-  let target: UrlStatus = 'pending';
-  if (independentMatch || (votesMet && !isProtected)) target = 'verified';
-  else if (distinctReporters(active) >= 2) target = 'corroborated';
-
+  let target: UrlStatus = independentMatch ? 'verified' : distinctReporters(active) >= 2 ? 'corroborated' : 'pending';
   // A new report joins whatever status the URL already reached (e.g. maintainer approval)
   for (const r of active) if (RANK[r.urlStatus] > RANK[target]) target = r.urlStatus;
 
-  const needsReview = target !== 'verified' && votesMet && isProtected;
-  await Promise.all(
-    active
-      .filter((r) => RANK[target] > RANK[r.urlStatus] || Boolean(r.needsReview) !== needsReview)
-      .map((r) => setStatus(r, RANK[target] > RANK[r.urlStatus] ? target : r.urlStatus, needsReview))
-  );
+  await Promise.all(active.filter((r) => RANK[target] > RANK[r.urlStatus]).map((r) => setStatus(r, target)));
   return target;
 }

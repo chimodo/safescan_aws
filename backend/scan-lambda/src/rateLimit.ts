@@ -6,7 +6,7 @@ import { ddb, TABLES } from './db';
  * Fixed one-hour window per caller. Returns false once the caller is over the limit.
  * One conditional write per request; rows expire via TTL an hour after the window ends.
  */
-export async function withinLimit(action: 'scan' | 'report', callerHash: string, limit: number): Promise<boolean> {
+export async function withinLimit(action: 'scan' | 'report' | 'vote', callerHash: string, limit: number): Promise<boolean> {
   const hour = Math.floor(Date.now() / 3_600_000);
   try {
     await ddb.send(

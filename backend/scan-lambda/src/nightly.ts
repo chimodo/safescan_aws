@@ -157,7 +157,7 @@ async function buildHotspots(): Promise<{ cells: PublicCell[]; campaigns: { url:
   for (const r of reports) {
     const cell = cells.get(r.geohash5!) ?? { reportCount: 0, tamperCount: 0, urls: new Set(), lastSeen: '' };
     cell.reportCount++;
-    if (r.tamperWarning !== 'none') cell.tamperCount++;
+    if (r.tamperWarning === 'possible' || r.tamperWarning === 'likely') cell.tamperCount++;
     cell.urls.add(r.urlHash);
     if (r.createdAt > cell.lastSeen) cell.lastSeen = r.createdAt;
     cells.set(r.geohash5!, cell);
@@ -212,7 +212,8 @@ async function buildThreatExport() {
   const byUrl = new Map<string, { url: string; categories: Map<string, number>; firstSeen: string; lastSeen: string }>();
   for (const r of await reportsWithStatus('verified')) {
     const e = byUrl.get(r.urlHash) ?? { url: r.url, categories: new Map(), firstSeen: r.createdAt, lastSeen: r.createdAt };
-    e.categories.set(r.category, (e.categories.get(r.category) ?? 0) + 1);
+    const category = r.threatType ?? r.category ?? 'other';
+    e.categories.set(category, (e.categories.get(category) ?? 0) + 1);
     if (r.createdAt < e.firstSeen) e.firstSeen = r.createdAt;
     if (r.createdAt > e.lastSeen) e.lastSeen = r.createdAt;
     byUrl.set(r.urlHash, e);
