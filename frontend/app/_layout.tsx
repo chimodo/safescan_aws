@@ -10,9 +10,21 @@ import {
 import { Orbitron_600SemiBold } from '@expo-google-fonts/orbitron';
 import { Stack } from 'expo-router';
 import { useFonts } from 'expo-font';
-import { useEffect } from 'react';
 import { FontsLoadedContext } from '../components/FontsLoadedContext';
 
 export default function RootLayout() {
-  return <Stack />;
+  const [fontsLoaded] = useFonts({
+    Montserrat_400Regular,
+    Montserrat_500Medium,
+    Montserrat_600SemiBold,
+    Montserrat_700Bold,
+    Montserrat_800ExtraBold,
+    Orbitron_600SemiBold,
+  });
+  if (!fontsLoaded) return null;
+  return (
+    <FontsLoadedContext.Provider value={fontsLoaded}>
+      <Stack />
+    </FontsLoadedContext.Provider>
+  );
 }

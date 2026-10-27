@@ -1,24 +1,19 @@
-import { BarcodeScanningResult, BarcodeType, CameraView } from 'expo-camera';
-import React, { useEffect, useState } from 'react';
+import { BarcodeScanningResult, BarcodeType, CameraView, scanFromURLAsync } from 'expo-camera';
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Easing, Linking, Platform, Pressable, View } from 'react-native';
 import AppIcon from './AppIcon';
 import Text from './AppText';
 import { ColorPalette } from '../constants/colors';
+import type { PolygonPoint, TamperCapture } from '../features/qr-tamper/types';
 import { supportedBarcodeTypes } from '../hooks/scanCodeImage';
 
-export default function CameraScanner({
-  active,
-  permission,
-  requestPermission,
-  colors,
-  styles,
-  reduceMotion,
-  hasPendingCode,
-  onCode,
-  onGallery,
-  galleryBusy,
-  onNotice,
-}: {
+export interface CameraScannerHandle {
+  runTamperCheck(expectedData: string): Promise<TamperCapture>;
+}
+
+const CAPTURE_SETTLE_MS = 250;
+
+const CameraScanner = forwardRef<CameraScannerHandle, {
   active: boolean;
   permission: { granted: boolean; canAskAgain: boolean } | null;
   requestPermission: () => Promise<{ granted: boolean }>;
@@ -30,11 +25,24 @@ export default function CameraScanner({
   onGallery: () => void;
   galleryBusy: boolean;
   onNotice: (message: string) => void;
-}) {
+}>(function CameraScanner({
+  active,
+  permission,
+  requestPermission,
+  colors,
+  styles,
+  reduceMotion,
+  hasPendingCode,
+  onCode,
+  onGallery,
+  galleryBusy,
+  onNotice,
+}, ref) {
+  const cameraRef = useRef<CameraView>(null);
+  const layoutSize = useRef({ width: 0, height: 0 });
   const [permissionLoading, setPermissionLoading] = useState(false);
   const [cameraError, setCameraError] = useState('');
   const [cameraReady, setCameraReady] = useState(false);
-  const [torchEnabled, setTorchEnabled] = useState(false);
   const [cameraKey, setCameraKey] = useState(0);
   // Lazy state, not a ref: the value is created once and is safe to read during render
   const [scanLineProgress] = useState(() => new Animated.Value(0));
@@ -64,13 +72,11 @@ export default function CameraScanner({
     return () => animation.stop();
   }, [active, cameraError, cameraReady, reduceMotion, scanLineProgress]);
 
-  // Turn the torch off and wait for a fresh camera when scanning is paused.
   // Adjusting state during render when a prop changes avoids an extra effect render.
   const [wasActive, setWasActive] = useState(active);
   if (active !== wasActive) {
     setWasActive(active);
     if (!active) {
-      setTorchEnabled(false);
       setCameraReady(false);
     }
   }
@@ -102,7 +108,6 @@ export default function CameraScanner({
   const retryCamera = () => {
     setCameraError('');
     setCameraReady(false);
-    setTorchEnabled(false);
     setCameraKey((key) => key + 1);
   };
 
@@ -111,21 +116,118 @@ export default function CameraScanner({
     setCameraError(event.message || 'The camera could not be started.');
   };
 
+  const onBarcodeScanned = (result: BarcodeScanningResult) => {
+    if (!hasPendingCode) onCode(result);
+  };
+
+  useImperativeHandle(ref, () => ({
+    async runTamperCheck(expectedData) {
+      const startedAt = Date.now();
+      if (Platform.OS === 'web') {
+        return {
+          status: 'unavailable',
+          predictedSticker: null,
+          captureMs: 0,
+          processingMs: 0,
+          totalMs: Date.now() - startedAt,
+          message: 'On-device sticker analysis is available in an iOS or Android development build.',
+        };
+      }
+      const camera = cameraRef.current;
+      if (!cameraReady || !camera) {
+        return {
+          status: 'unavailable',
+          predictedSticker: null,
+          captureMs: 0,
+          processingMs: 0,
+          totalMs: Date.now() - startedAt,
+          message: 'The camera is not ready to capture the QR code.',
+        };
+      }
+      let captureMs = 0;
+      let stage = 'capturing the still image';
+      try {
+        await new Promise((resolve) => setTimeout(resolve, CAPTURE_SETTLE_MS));
+        const picture = await camera.takePictureAsync({ base64: true, quality: 1 });
+        if (!picture.base64) throw new Error('The camera did not return image data for sticker analysis.');
+        captureMs = Date.now() - startedAt;
+
+        stage = 'detecting QR corners in the captured image';
+        const processingStartedAt = Date.now();
+        if (!picture.uri) throw new Error('The camera did not provide a saved image for QR corner detection.');
+        const detectedCodes = await scanFromURLAsync(picture.uri, ['qr']);
+        if (!Array.isArray(detectedCodes)) {
+          throw new Error('The still-image QR scanner returned an invalid result.');
+        }
+        const qr = detectedCodes.find(({ data }) => data === expectedData) ??
+          (detectedCodes.length === 1 ? detectedCodes[0] : undefined);
+        if (!qr || qr.cornerPoints.length !== 4) {
+          throw new Error('Could not find all four QR corners in the captured image. Please hold the code steady and try again.');
+        }
+        const imagePoints: PolygonPoint[] = qr.cornerPoints.map(({ x, y }) => ({
+          x,
+          y: Platform.OS === 'ios' ? picture.height - y : y,
+        }));
+        stage = 'loading the native OpenCV analyzer';
+        const { measureStickerBoundary } = await import('../features/qr-tamper/opencv');
+        stage = 'running the native OpenCV analyzer';
+        const measurements = measureStickerBoundary(picture.base64, imagePoints);
+        const processingMs = Date.now() - processingStartedAt;
+        const totalMs = Date.now() - startedAt;
+
+        return {
+          status: 'complete',
+          predictedSticker: measurements.candidate,
+          captureMs,
+          processingMs,
+          totalMs,
+          message: measurements.candidate
+            ? undefined
+            : 'No elevated QR-edge pattern was detected. This does not rule out a sticker; try another angle or lighting condition.',
+          measurements,
+        };
+      } catch (error) {
+        console.error('Sticker analysis failed', { stage, error });
+        const errorMessage = error instanceof Error
+          ? error.message
+          : String(error);
+        const message = `Sticker analysis failed while ${stage}: ${errorMessage}`;
+        return {
+          status: 'unavailable',
+          predictedSticker: null,
+          captureMs,
+          processingMs: 0,
+          totalMs: Date.now() - startedAt,
+          message,
+        };
+      }
+    },
+  }), [cameraReady]);
+
   const translateY = scanLineProgress.interpolate({ inputRange: [0, 1], outputRange: [5, 212] });
   const barcodeTypes = Platform.OS === 'web' ? ['qr'] as BarcodeType[] : supportedBarcodeTypes;
 
   return (
-    <View style={styles.homeCameraCard}>
+    <View
+      style={styles.homeCameraCard}
+      onLayout={(event) => {
+        layoutSize.current = {
+          width: event.nativeEvent.layout.width,
+          height: event.nativeEvent.layout.height,
+        };
+      }}
+    >
       {active && permission?.granted && !cameraError ? (
         <>
           <CameraView
+            ref={cameraRef}
             key={cameraKey}
             style={styles.homeCameraPreview}
             facing="back"
             active={active}
-            enableTorch={Platform.OS !== 'web' && torchEnabled}
+            enableTorch={false}
             barcodeScannerSettings={{ barcodeTypes }}
-            onBarcodeScanned={hasPendingCode ? undefined : onCode}
+            onBarcodeScanned={onBarcodeScanned}
             onCameraReady={() => setCameraReady(true)}
             onMountError={onCameraError}
           />
@@ -148,20 +250,6 @@ export default function CameraScanner({
               </Text>
             </View>
             <View style={styles.cameraTools}>
-              <Pressable
-                onPress={() => {
-                  if (Platform.OS === 'web') {
-                    onNotice('Flashlight control is available on supported mobile cameras.');
-                  } else {
-                    setTorchEnabled((enabled) => !enabled);
-                  }
-                }}
-                style={styles.cameraToolButton}
-                accessibilityRole="button"
-                accessibilityLabel={torchEnabled ? 'Turn flashlight off' : 'Turn flashlight on'}
-              >
-                <AppIcon name={torchEnabled ? 'flash' : 'flash-outline'} color={torchEnabled ? colors.amberStrong : '#FFFFFF'} size={20} />
-              </Pressable>
               <Pressable
                 onPress={onGallery}
                 disabled={galleryBusy}
@@ -242,4 +330,6 @@ export default function CameraScanner({
       )}
     </View>
   );
-}
+});
+
+export default CameraScanner;
