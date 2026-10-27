@@ -1,0 +1,29 @@
+diff --git a/node_modules/react-native-fast-opencv/android/CMakeLists.txt b/node_modules/react-native-fast-opencv/android/CMakeLists.txt
+--- a/node_modules/react-native-fast-opencv/android/CMakeLists.txt
++++ b/node_modules/react-native-fast-opencv/android/CMakeLists.txt
+@@ -41,5 +41,5 @@
+   fbjni::fbjni
+   ReactAndroid::jsi
+   ReactAndroid::reactnative
+-  OpenCV::opencv_java4
++  OpenCV::opencv_java5
+ )
+diff --git a/node_modules/react-native-fast-opencv/android/build.gradle b/node_modules/react-native-fast-opencv/android/build.gradle
+--- a/node_modules/react-native-fast-opencv/android/build.gradle
++++ b/node_modules/react-native-fast-opencv/android/build.gradle
+@@ -85,7 +85,7 @@
+         "**/libreactnative.so",
+         "**/libhermes.so",
+         "**/libhermestooling.so",
+-        "**/libopencv_java4.so"
++        "**/libopencv_java5.so"
+       ]
+     }
+   }
+@@ -118,5 +118,5 @@
+
+ dependencies {
+   implementation "com.facebook.react:react-android"
+-  implementation 'org.opencv:opencv:4.12.0'
++  implementation 'org.opencv:opencv:5.0.0'
+ }

@@ -21,7 +21,7 @@ The [README](../README.md#architecture) has the full diagram. In brief:
 | Part | Technology | Role |
 | --- | --- | --- |
 | Mobile app | Expo SDK 57, React Native 0.86, expo-camera | Scans QR codes and barcodes, shows the verdict, opens links only after confirmation, shares reports |
-| On-device vision | OpenCV via `react-native-fast-opencv` (JSI) | Sticker-edge check on a still capture; the image never leaves the phone |
+| On-device vision | OpenCV 5.0.0 via `react-native-fast-opencv` (JSI) | Sticker-edge check on a still capture; the image never leaves the phone |
 | Shared rules | TypeScript in `shared/` | URL normalization, heuristics, verdict levels and limits, compiled into both the app and the Lambda so they agree |
 | API | AWS Lambda function URL (Node 22, arm64) | `/scan`, `/report`, `/vote`, `/link/{hash}`, `/recent` |
 | Data | DynamoDB (5 tables), S3 (screenshots, website), SSM Parameter Store (secrets) | Verdict cache, reports, votes, rate limits, hotspot counts |
@@ -45,7 +45,7 @@ A report carries the link, one of seven threat types, optional details (up to 1,
 
 ## 4. OpenCV implementation
 
-The sticker check runs on the phone in `frontend/features/qr-tamper/` (`opencv.native.ts`), through `react-native-fast-opencv`, a JSI binding to native OpenCV.
+The sticker check runs on the phone in `frontend/features/qr-tamper/` (`opencv.native.ts`), through `react-native-fast-opencv`, a JSI binding to native OpenCV. The app links **OpenCV 5.0.0** (`org.opencv:opencv:5.0.0`). The binding ships with OpenCV 4.12, so `frontend/patches/react-native-fast-opencv+1.0.1.patch` points its Android build at the OpenCV 5 package (`opencv_java5`). `patch-package` applies the patch on every `npm install`, including on the EAS build servers.
 
 1. **Capture:** one still frame (`takePictureAsync`) after a 250 ms settle. QR corners are detected again in that still (`scanFromURLAsync`), rather than mapped from the live preview, so the corners match the analysed image.
 2. **Rectify:** a perspective warp maps the QR and its surroundings to a 960×960 image, with the QR occupying 640 pixels. Its quiet zone and the band where a sticker's edge would fall then sit at known positions.
@@ -53,7 +53,7 @@ The sticker check runs on the phone in `frontend/features/qr-tamper/` (`opencv.n
 4. **Measure:** Sobel gradients across the QR boundary. On textured surroundings, the check compares the low-gradient pattern inside the QR with an outer ring, because a sticker's smooth paper differs from the surface around it. On white or low-texture surroundings, it uses a normalized boundary-profile check that looks for an edge or contact shadow.
 5. **Report:** a "possible sticker" flag, the measurements and timings. These are stored locally for a developer diagnostics screen that computes a confusion matrix from user-labelled trials. Captured images are not saved.
 
-**OpenCV version:** `react-native-fast-opencv` 1.0.1 bundles **OpenCV 4.12.0** on Android. The algorithm uses core OpenCV operations (perspective transform, Sobel, percentile statistics) that behave the same in OpenCV 5. Moving the binding to OpenCV 5 is listed under future work.
+The algorithm uses core OpenCV operations (perspective transform, Sobel, percentile statistics), whose behaviour is unchanged in OpenCV 5. OpenCV 5 keeps the `features2d.hpp` and `calib3d.hpp` compatibility headers that the binding includes, so its C++ code needs no changes.
 
 Before the method was ported to the phone, it was prototyped offline in Python with OpenCV, following the experiment plan in `examples/ANALYSIS_AGENT_INSTRUCTIONS.md`. That plan compares masking, global and adaptive thresholds, Canny, Sobel and contour filtering on the labelled positive and negative images in `examples/`.
 
@@ -110,7 +110,7 @@ The detector was developed on one labelled positive and one labelled negative im
 
 - **Coverage:** detection of brand-new phishing links depends on heuristics and community reports. The heuristics miss brand-in-subdomain and some lookalike patterns (above).
 - **Sticker check:** experimental. It isn't calibrated or validated on a meaningful dataset, and white-on-white is unreliable. It's shown as a hint, never as a verdict.
-- **OpenCV version:** OpenCV 4.12 through the React Native binding, not OpenCV 5.
+- **OpenCV on iOS:** the patch covers Android only. The iOS build still uses the prebuilt OpenCV framework in the binding's `FastOpenCV-iOS` 1.0.4 pod, and the Android build with OpenCV 5 has not yet been run on a device.
 - **Tuning values are placeholders:** the suspicious threshold (40), the community thresholds (1 report, 10 votes) and the 20-domain "popular" list, which should be a real top-sites list such as Tranco.
 - **Platforms:** tested on Android. The iOS build is configured but untested, and the sticker check and human check need a native build, not Expo Go or the web.
 - **Safe Browsing terms:** the Lookup API is free for non-commercial use only. A commercial launch would need Google Web Risk.
@@ -142,7 +142,7 @@ The detector was developed on one labelled positive and one labelled negative im
 
 ## 9. Future work
 
-- Move the sticker check to OpenCV 5, and collect a labelled set of real sticker and non-sticker captures to calibrate it.
+- Package OpenCV 5 for iOS, and collect a labelled set of real sticker and non-sticker captures to calibrate it.
 - Add brand-in-subdomain and lookalike-domain scoring, and replace the popular-domain list with the Tranco top 10,000.
 - Feed the sticker check result into reports (`tamperWarning`), which today is always "unchecked".
 - Publish the nightly hotspot map, and add a budget alarm and reserved concurrency.

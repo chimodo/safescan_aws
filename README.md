@@ -1,6 +1,6 @@
 # SafeScan
 
-SafeScan checks a QR code before you open it. Point the phone at a code and SafeScan tells you whether the link is a known threat, looks suspicious, or has been reported by other people, without visiting the link itself. On the phone, OpenCV also looks for signs that a sticker has been pasted over the original QR code, a common way to swap a parking-meter or restaurant code for a phishing one.
+SafeScan checks a QR code before you open it. Point the phone at a code and SafeScan tells you whether the link is a known threat, looks suspicious, or has been reported by other people, without visiting the link itself. On the phone, OpenCV 5 also looks for signs that a sticker has been pasted over the original QR code, a common way to swap a parking-meter or restaurant code for a phishing one.
 
 | | |
 | --- | --- |
@@ -24,7 +24,7 @@ curl -X POST https://hggnmfb55rkvypwevw5owgj3y40srnpp.lambda-url.us-east-1.on.aw
 flowchart LR
   subgraph Phone["Android / iOS app (Expo, React Native)"]
     Cam["Camera + barcode scanner<br/>expo-camera"]
-    CV["Sticker check<br/>OpenCV via react-native-fast-opencv<br/>(on device, image never uploaded)"]
+    CV["Sticker check<br/>OpenCV 5 via react-native-fast-opencv<br/>(on device, image never uploaded)"]
     Heur["Link heuristics<br/>shared/heuristics.ts"]
     Share["Share with community<br/>+ Turnstile human check (WebView)"]
   end
@@ -93,7 +93,8 @@ Every Node project commits its `package-lock.json`, so `npm ci` installs the exa
 | --- | --- |
 | Node.js (local tools) | 22 LTS (Lambda runtime: `NODEJS_22_X`, arm64) |
 | Expo SDK / React Native | 57 / 0.86.3 |
-| react-native-fast-opencv (bundles OpenCV) | 1.0.1 (OpenCV 4.12.0 on Android) |
+| OpenCV | **5.0.0** (Android, `org.opencv:opencv:5.0.0` from Maven Central) |
+| react-native-fast-opencv | 1.0.1, patched to link OpenCV 5 (`frontend/patches/`, applied by `patch-package` on install) |
 | react-native-webview / expo-image-manipulator | 13.16.1 / 57.0.21 |
 | AWS CDK CLI / aws-cdk-lib | 2.1145.0 / 2.272.x (locked in `infra/package-lock.json`) |
 | TypeScript | 7.0.x |
