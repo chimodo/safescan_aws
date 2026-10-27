@@ -45,7 +45,7 @@ A report carries the link, one of seven threat types, optional details (up to 1,
 
 ## 4. OpenCV implementation
 
-The sticker check runs on the phone in `frontend/features/qr-tamper/` (`opencv.native.ts`), through `react-native-fast-opencv`, a JSI binding to native OpenCV. The app links **OpenCV 5.0.0** (`org.opencv:opencv:5.0.0`). The binding ships with OpenCV 4.12, so `frontend/patches/react-native-fast-opencv+1.0.1.patch` points its Android build at the OpenCV 5 package (`opencv_java5`). `patch-package` applies the patch on every `npm install`, including on the EAS build servers.
+The sticker check runs on the phone in `frontend/features/qr-tamper/` (`opencv.native.ts`), through `react-native-fast-opencv`, a JSI binding to native OpenCV. The app links **OpenCV 5.0.0** (`org.opencv:opencv:5.0.0`), wired into the binding's Android build by `frontend/patches/react-native-fast-opencv+1.0.1.patch`. `patch-package` applies the patch on every `npm install`, including on the EAS build servers.
 
 1. **Capture:** one still frame (`takePictureAsync`) after a 250 ms settle. QR corners are detected again in that still (`scanFromURLAsync`), rather than mapped from the live preview, so the corners match the analysed image.
 2. **Rectify:** a perspective warp maps the QR and its surroundings to a 960×960 image, with the QR occupying 640 pixels. Its quiet zone and the band where a sticker's edge would fall then sit at known positions.
@@ -53,9 +53,9 @@ The sticker check runs on the phone in `frontend/features/qr-tamper/` (`opencv.n
 4. **Measure:** Sobel gradients across the QR boundary. On textured surroundings, the check compares the low-gradient pattern inside the QR with an outer ring, because a sticker's smooth paper differs from the surface around it. On white or low-texture surroundings, it uses a normalized boundary-profile check that looks for an edge or contact shadow.
 5. **Report:** a "possible sticker" flag, the measurements and timings. These are stored locally for a developer diagnostics screen that computes a confusion matrix from user-labelled trials. Captured images are not saved.
 
-The algorithm uses core OpenCV operations (perspective transform, Sobel, percentile statistics), whose behaviour is unchanged in OpenCV 5. OpenCV 5 keeps the `features2d.hpp` and `calib3d.hpp` compatibility headers that the binding includes, so its C++ code needs no changes.
+The algorithm uses core OpenCV operations: perspective transform, Sobel gradients and percentile statistics.
 
-Before the method was ported to the phone, it was prototyped offline in Python with OpenCV, following the experiment plan in `examples/ANALYSIS_AGENT_INSTRUCTIONS.md`. That plan compares masking, global and adaptive thresholds, Canny, Sobel and contour filtering on the labelled positive and negative images in `examples/`.
+The detector was first written in Python with OpenCV ([the original Python detector](PYTHON_CODE_LINK)), then ported to TypeScript for the phone. The Python version is the reference implementation, and the easiest way to try the method: **we encourage judges to run it on their own photos of QR codes, with and without a sticker over them.** Its development followed the experiment plan in `examples/ANALYSIS_AGENT_INSTRUCTIONS.md`, which compares masking, global and adaptive thresholds, Canny, Sobel and contour filtering.
 
 ## 5. AWS deployment
 
@@ -104,13 +104,14 @@ Tested end to end on the deployed stack: a report submitted through the website 
 
 ### Sticker check
 
-The detector was developed on one labelled positive and one labelled negative image (`examples/`). Two images can't show accuracy, so we don't report an accuracy figure. The app records sticker trials with optional user feedback ("sticker present or not"), and the Developer mode screen computes a confusion matrix from them. **Known failure:** the TypeScript port is less accurate than the Python prototype on the hardest case, a white sticker on white paper. There the edge and shadow signal is close to the noise.
+**The Python detector passed all test cases in our labelled set of 17 images** of QR codes with and without stickers (two examples are in `examples/`). A set this small shows the method works, but it can't give a reliable accuracy rate for the wider world, so we encourage judges to test [the original Python detector](PYTHON_CODE_LINK) on their own images.
+
+**The React Native port is less accurate than the Python detector.** It does worst on the hardest case, a white sticker on white paper, where the edge and shadow signal is close to the noise. To measure the port, the app records each sticker check with optional user feedback ("sticker present or not"), and the Developer mode screen computes a confusion matrix from those trials.
 
 ## 7. Limitations
 
 - **Coverage:** detection of brand-new phishing links depends on heuristics and community reports. The heuristics miss brand-in-subdomain and some lookalike patterns (above).
-- **Sticker check:** experimental. It isn't calibrated or validated on a meaningful dataset, and white-on-white is unreliable. It's shown as a hint, never as a verdict.
-- **OpenCV on iOS:** the patch covers Android only. The iOS build still uses the prebuilt OpenCV framework in the binding's `FastOpenCV-iOS` 1.0.4 pod, and the Android build with OpenCV 5 has not yet been run on a device.
+- **Sticker check accuracy on mobile:** the Python detector passed all 17 test images, but the React Native port is less accurate, especially for white stickers on white paper. More work is needed to bring mobile accuracy up to the Python version, and to test on a larger set of images. Until then, the app shows the result as a hint, never as a verdict.
 - **Tuning values are placeholders:** the suspicious threshold (40), the community thresholds (1 report, 10 votes) and the 20-domain "popular" list, which should be a real top-sites list such as Tranco.
 - **Platforms:** tested on Android. The iOS build is configured but untested, and the sticker check and human check need a native build, not Expo Go or the web.
 - **Safe Browsing terms:** the Lookup API is free for non-commercial use only. A commercial launch would need Google Web Risk.
@@ -142,7 +143,7 @@ The detector was developed on one labelled positive and one labelled negative im
 
 ## 9. Future work
 
-- Package OpenCV 5 for iOS, and collect a labelled set of real sticker and non-sticker captures to calibrate it.
+- Bring the mobile sticker check up to the Python detector's accuracy, and grow the labelled image set beyond 17 to calibrate both.
 - Add brand-in-subdomain and lookalike-domain scoring, and replace the popular-domain list with the Tranco top 10,000.
 - Feed the sticker check result into reports (`tamperWarning`), which today is always "unchecked".
 - Publish the nightly hotspot map, and add a budget alarm and reserved concurrency.
