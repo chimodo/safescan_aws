@@ -12,6 +12,9 @@ export interface ColorPalette {
   amber: string;
   amberLight: string;
   amberStrong: string;
+  /** Level 3, Very suspicious: between amber (level 2) and red (level 4) */
+  orange: string;
+  orangeLight: string;
   red: string;
   redLight: string;
   paleBlue: string;
@@ -40,6 +43,8 @@ export const COLORS: ColorPalette = {
   amber: '#A96500',
   amberLight: '#FFF1D8',
   amberStrong: '#F2A900',
+  orange: '#C2410C',
+  orangeLight: '#FFE8D9',
   red: '#B42332',
   redLight: '#FDE7E8',
   paleBlue: '#E8F1F6',
@@ -68,6 +73,8 @@ export const DARK_COLORS: ColorPalette = {
   amber: '#FFC15B',
   amberLight: '#49371C',
   amberStrong: '#FFC15B',
+  orange: '#FF9A57',
+  orangeLight: '#4A2E1E',
   red: '#FF7B83',
   redLight: '#48252B',
   paleBlue: '#203540',

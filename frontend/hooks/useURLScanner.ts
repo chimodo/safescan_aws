@@ -2,11 +2,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 import { normalizeUrl } from '../../shared/normalizeUrl';
 import { scoreHeuristics, SUSPICIOUS_THRESHOLD, type HeuristicResult } from '../../shared/heuristics';
-import { decideVerdict, type ScanResponse, type Verdict } from '../../shared/verdict';
+import { decideVerdict, LEVEL_LABELS, type Level, type ScanResponse, type Verdict } from '../../shared/verdict';
 import { ScanReport, SecurityCheck, ThreatLevel } from '../types';
 
 // AWS Lambda function URL (InfraStack output "ScanUrl"). Override with EXPO_PUBLIC_SCAN_URL in frontend/.env.
-const SCANNER_ENDPOINT =
+export const SCANNER_ENDPOINT =
   process.env.EXPO_PUBLIC_SCAN_URL ?? 'https://hggnmfb55rkvypwevw5owgj3y40srnpp.lambda-url.us-east-1.on.aws/';
 const INSTALL_ID_KEY = '@safescan/install-id-v1';
 const TIMEOUT_MS = 15000;
@@ -48,6 +48,15 @@ function threatLevel(verdict: Verdict, limited: boolean): ThreatLevel {
   return limited ? 'unknown' : 'safe';
 }
 
+function isLevel(value: unknown): value is Level {
+  return value === 1 || value === 2 || value === 3 || value === 4;
+}
+
+/** Older backends send only the three-value verdict */
+function levelFromVerdict(verdict: Verdict): Level {
+  return verdict === 'DANGEROUS' ? 4 : verdict === 'SUSPICIOUS' ? 2 : 1;
+}
+
 function heuristicsCheck(heur: HeuristicResult): SecurityCheck {
   return {
     checkName: 'heuristics',
@@ -57,29 +66,53 @@ function heuristicsCheck(heur: HeuristicResult): SecurityCheck {
   };
 }
 
-function toReport(response: ScanResponse, heur: HeuristicResult): ScanReport {
-  // The backend recomputes heuristics; whatever isn't a heuristic reason came from a threat database
-  const databaseReasons = response.reasons.filter((reason) => !heur.reasons.includes(reason));
+function communityCheck(submissions: number, level: Level, reasons: string[]): SecurityCheck {
+  if (submissions === 0) {
+    return { checkName: 'community', threatLevel: 'safe', detail: 'No one has shared this link with the SafeScan community.' };
+  }
+  return {
+    checkName: 'community',
+    threatLevel: level >= 2 ? 'suspicious' : 'safe',
+    detail: reasons.length ? reasons.join('. ') + '.' : `Shared ${submissions} time${submissions === 1 ? '' : 's'} by the SafeScan community.`,
+  };
+}
+
+function toReport(response: ScanResponse, heur: HeuristicResult, urlHash: string): ScanReport {
+  const level = isLevel(response.level) ? response.level : levelFromVerdict(response.verdict);
+  const submissions = response.community?.submissions ?? 0;
+  const votes = response.community?.votes ?? 0;
+  // The backend recomputes heuristics; the rest came from a threat database or the community
+  const otherReasons = response.reasons.filter((reason) => !heur.reasons.includes(reason));
+  const communityReasons = otherReasons.filter((reason) => /community|found these reports helpful/i.test(reason));
+  const databaseReasons = otherReasons.filter((reason) => !communityReasons.includes(reason));
   const reputation: SecurityCheck = response.limited
     ? { checkName: 'reputation', threatLevel: 'unknown', detail: 'The threat database could not be reached, so only link patterns were checked.' }
-    : response.verdict === 'DANGEROUS'
+    : level === 4
       ? { checkName: 'reputation', threatLevel: 'malicious', detail: databaseReasons.join('. ') + '.' }
-      : { checkName: 'reputation', threatLevel: 'safe', detail: 'Not found in Google Safe Browsing, public phishing feeds or SafeScan community reports.' };
+      : { checkName: 'reputation', threatLevel: 'safe', detail: 'Not found in Google Safe Browsing or public phishing feeds.' };
 
   return {
     url: response.url,
     finalVerdict: threatLevel(response.verdict, response.limited),
-    checks: [reputation, heuristicsCheck(heur)],
+    checks: [reputation, communityCheck(submissions, level, communityReasons), heuristicsCheck(heur)],
     scannedAt: new Date().toISOString(),
     cached: response.cached,
     serviceMessage: response.limited ? 'Limited check: only link patterns were checked.' : undefined,
+    level,
+    levelLabel: typeof response.levelLabel === 'string' && response.levelLabel ? response.levelLabel : LEVEL_LABELS[level],
+    urlHash,
+    community: { submissions, votes },
   };
 }
 
 /** Heuristics-only result for when the backend can't be reached or is throttling */
-function limitedReport(url: string, heur: HeuristicResult, reason: string): ScanReport {
+function limitedReport(url: string, urlHash: string, heur: HeuristicResult, reason: string): ScanReport {
   const { verdict } = decideVerdict(false, heur);
+  const level = levelFromVerdict(verdict);
   return {
+    level,
+    levelLabel: LEVEL_LABELS[level],
+    urlHash,
     url,
     finalVerdict: threatLevel(verdict, true),
     checks: [{ checkName: 'reputation', threatLevel: 'unknown', detail: reason }, heuristicsCheck(heur)],
@@ -112,6 +145,7 @@ export async function scanURL(rawUrl: string): Promise<ScanReport> {
   } catch {
     return limitedReport(
       url,
+      urlHash,
       heur,
       controller.signal.aborted
         ? 'The SafeScan service took too long to respond, so only link patterns were checked.'
@@ -122,24 +156,24 @@ export async function scanURL(rawUrl: string): Promise<ScanReport> {
   }
 
   if (response.status === 429) {
-    return limitedReport(url, heur, 'SafeScan is busy right now, so only link patterns were checked. Try again later for a full check.');
+    return limitedReport(url, urlHash, heur, 'SafeScan is busy right now, so only link patterns were checked. Try again later for a full check.');
   }
   if (response.status === 400) {
     throw new Error('This is not a valid web address, so SafeScan did not check it.');
   }
   if (!response.ok) {
-    return limitedReport(url, heur, `The SafeScan service returned an error (${response.status}), so only link patterns were checked.`);
+    return limitedReport(url, urlHash, heur, `The SafeScan service returned an error (${response.status}), so only link patterns were checked.`);
   }
 
   let payload: unknown;
   try {
     payload = await response.json();
   } catch {
-    return limitedReport(url, heur, 'The SafeScan service sent an unreadable response, so only link patterns were checked.');
+    return limitedReport(url, urlHash, heur, 'The SafeScan service sent an unreadable response, so only link patterns were checked.');
   }
   if (!isScanResponse(payload)) {
-    return limitedReport(url, heur, 'The SafeScan service sent an unexpected response, so only link patterns were checked.');
+    return limitedReport(url, urlHash, heur, 'The SafeScan service sent an unexpected response, so only link patterns were checked.');
   }
 
-  return toReport(payload, heur);
+  return toReport(payload, heur, urlHash);
 }

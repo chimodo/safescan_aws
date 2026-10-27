@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>SafeScan human check</title>
+  <style>
+    html, body { margin: 0; background: transparent; }
+    body { display: flex; align-items: center; justify-content: center; min-height: 100vh; font: 13px system-ui, sans-serif; color: #526875; }
+  </style>
+  <script src="/config.js"></script>
+</head>
+<body>
+  <!-- Bridge for the app's share screen: the app loads this page in a WebView and receives the token. -->
+  <div id="widget"></div>
+  <script>
+    function post(message) {
+      if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(message));
+    }
+    window.onTurnstileLoad = function () {
+      window.turnstile.render('#widget', {
+        sitekey: window.SAFESCAN_CONFIG.turnstileSiteKey,
+        callback: function (token) { post({ token: token }); },
+        'expired-callback': function () { post({ expired: true }); },
+        'error-callback': function () { post({ error: true }); },
+      });
+    };
+  </script>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=onTurnstileLoad" async defer></script>
+</body>
+</html>

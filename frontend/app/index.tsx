@@ -3,6 +3,7 @@ import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import { BarcodeScanningResult, useCameraPermissions } from 'expo-camera';
 import { StatusBar } from 'expo-status-bar';
+import * as WebBrowser from 'expo-web-browser';
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppState,
@@ -26,27 +27,34 @@ import type { IconName } from '../components/AppIcon';
 import CameraScanner from '../components/CameraScanner';
 import type { CameraScannerHandle } from '../components/CameraScanner';
 import { FontsLoadedContext } from '../components/FontsLoadedContext';
+import ShareWithCommunity from '../components/ShareWithCommunity';
 import { ColorPalette, COLORS, DARK_COLORS } from '../constants/colors';
 import DeveloperMetricsScreen from '../features/qr-tamper/DeveloperMetricsScreen';
 import { calculateConfusionMetrics } from '../features/qr-tamper/metrics';
 import { loadTamperTrials, saveTamperTrials } from '../features/qr-tamper/storage';
 import TamperResultCard from '../features/qr-tamper/TamperResultCard';
 import type { TamperCapture, TamperFeedback, TamperTrial } from '../features/qr-tamper/types';
+import { communityLinkUrl } from '../hooks/communityApi';
 import { scanCodeImage } from '../hooks/scanCodeImage';
 import { scanURL } from '../hooks/useURLScanner';
 import { ScanReport, StoredScan, ThreatLevel } from '../types';
+import { LEVEL_LABELS, type Level } from '../../shared/verdict';
 
 type Tab = 'home' | 'history' | 'settings';
-type Screen = Tab | 'scanning' | 'result' | 'report' | 'code' | 'developer';
+type Screen = Tab | 'scanning' | 'result' | 'report' | 'code' | 'developer' | 'share';
 type AppearancePreference = 'system' | 'light' | 'dark';
 type ActiveCode = { value: string; type: string; scannedAt: string; historical?: boolean };
 type PendingCode = Pick<BarcodeScanningResult, 'data' | 'type' | 'cornerPoints'>;
 type ModalContent = {
   title: string;
   body: string;
-  kind?: 'clear-history' | 'url';
+  kind?: 'clear-history' | 'url' | 'open-link';
   url?: string;
+  /** For 'open-link': the address to open if the person confirms */
+  target?: string;
 };
+/** What a result shows: verdict level 1-4, or 'unverified' when no threat database was checked */
+type VerdictKey = Level | 'unverified';
 
 const HISTORY_KEY = '@safescan/history-v1';
 const APPEARANCE_KEY = '@safescan/appearance-v1';
@@ -66,6 +74,7 @@ const checkNames: Record<string, string> = {
   typosquatting: 'Lookalike domain check',
   ml: 'Risk pattern check',
   reputation: 'Known threat database',
+  community: 'Community reports',
   redirects: 'Redirect check',
   domainage: 'Domain age check',
   deepscan: 'Extended scan',
@@ -94,6 +103,7 @@ function isStoredScan(value: unknown): value is StoredScan | LegacyStoredScan {
     typeof candidate.id === 'string' &&
     isThreatLevel(candidate.finalVerdict) &&
     typeof candidate.scannedAt === 'string' &&
+    (candidate.level === undefined || [1, 2, 3, 4].includes(candidate.level as number)) &&
     checksAreValid(candidate.checks) &&
     ((candidate.scanType === 'url' && typeof candidate.displayValue === 'string') ||
       (candidate.scanType === 'barcode' &&
@@ -197,38 +207,54 @@ function displayName(checkName: string) {
     checkName.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]/g, ' ');
 }
 
-function verdictDetails(verdict: ThreatLevel, colors: ColorPalette) {
-  switch (verdict) {
-    case 'safe':
+/** Scans saved before the four levels have only the internal verdict name */
+function verdictKey(finalVerdict: ThreatLevel, level?: Level): VerdictKey {
+  if (finalVerdict === 'unknown') return 'unverified';
+  if (level) return level;
+  return finalVerdict === 'malicious' ? 4 : finalVerdict === 'suspicious' ? 2 : 1;
+}
+
+function verdictDetails(key: VerdictKey, colors: ColorPalette) {
+  switch (key) {
+    case 1:
       return {
-        title: 'No known threats detected',
+        title: LEVEL_LABELS[1],
         summary: 'The checks that completed did not report a known threat. No scan can guarantee that a link is safe.',
         action: 'No known threats were reported. Stay alert for unexpected requests for passwords or payment details.',
         color: colors.green,
         tint: colors.greenLight,
         icon: 'shield-checkmark' as const,
       };
-    case 'suspicious':
+    case 2:
       return {
-        title: 'Proceed with caution',
+        title: LEVEL_LABELS[2],
         summary: 'Some signals need a closer look. A warning is not proof that this link is malicious.',
         action: 'Avoid entering personal or payment information until you can verify the destination independently.',
         color: colors.amber,
         tint: colors.amberLight,
         icon: 'warning' as const,
       };
-    case 'malicious':
+    case 3:
       return {
-        title: 'This link appears dangerous',
-        summary: 'The scanner reported a high-risk signal for this link.',
+        title: LEVEL_LABELS[3],
+        summary: 'People in the SafeScan community reported this link, and many found those reports helpful. No threat database has confirmed it yet.',
+        action: 'Don’t enter personal or payment information. If you need to visit this site, find it another way than this link.',
+        color: colors.orange,
+        tint: colors.orangeLight,
+        icon: 'alert-circle' as const,
+      };
+    case 4:
+      return {
+        title: LEVEL_LABELS[4],
+        summary: 'A threat database or a SafeScan maintainer reported this link as dangerous.',
         action: 'We recommend not opening this link. If it came from someone you know, confirm with them another way.',
         color: colors.red,
         tint: colors.redLight,
-        icon: 'shield' as const,
+        icon: 'close-circle' as const,
       };
     default:
       return {
-        title: 'We couldn’t fully verify this link',
+        title: 'Not verified',
         summary: 'Some checks are unavailable or could not confirm the link’s status. Treat it carefully.',
         action: 'If you were not expecting this link, do not open it. Try again later or verify it with the sender.',
         color: colors.secondaryText,
@@ -245,13 +271,16 @@ function formatTimestamp(value: string) {
     : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-function verdictLabel(verdict: ThreatLevel) {
-  switch (verdict) {
-    case 'safe': return 'No known threats';
-    case 'suspicious': return 'Use caution';
-    case 'malicious': return 'High risk';
-    default: return 'Not verified';
-  }
+function verdictLabel(key: VerdictKey) {
+  return key === 'unverified' ? 'Not verified' : LEVEL_LABELS[key];
+}
+
+function verdictColor(key: VerdictKey, colors: ColorPalette) {
+  if (key === 1) return colors.green;
+  if (key === 2) return colors.amber;
+  if (key === 3) return colors.orange;
+  if (key === 4) return colors.red;
+  return colors.muted;
 }
 
 function levelColor(level: ThreatLevel, colors: ColorPalette) {
@@ -275,14 +304,15 @@ function HistoryItem({
   onPress: () => void;
 }) {
   const title = entry.displayValue;
-  const status = verdictLabel(entry.finalVerdict);
+  const key = verdictKey(entry.finalVerdict, entry.level);
+  const status = verdictLabel(key);
   return (
     <Pressable onPress={onPress} accessibilityRole="button" style={styles.recentRow}>
       <View style={[styles.recentIcon, { backgroundColor: colors.surface2 }]}>
         <AppIcon
           name={entry.scanType === 'barcode' ? 'barcode-outline' : 'globe-outline'}
           size={17}
-          color={levelColor(entry.finalVerdict, colors)}
+          color={verdictColor(key, colors)}
         />
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -290,7 +320,7 @@ function HistoryItem({
         {!compact && <Text style={styles.historyTime}>{barcodeTypeLabel(entry.barcodeType ?? 'qr')} · {entry.checks.length} checks</Text>}
         <Text style={styles.recentTime}>{formatRelativeTime(entry.scannedAt)}</Text>
       </View>
-      <Text style={[styles.recentStatus, { backgroundColor: colors.surface2, color: levelColor(entry.finalVerdict, colors) }]}>{status}</Text>
+      <Text style={[styles.recentStatus, { backgroundColor: colors.surface2, color: verdictColor(key, colors) }]}>{status}</Text>
     </Pressable>
   );
 }
@@ -337,7 +367,7 @@ export default function Scanner() {
   const [isHistoricalReport, setIsHistoricalReport] = useState(false);
   const [history, setHistory] = useState<StoredScan[]>([]);
   const [historySearch, setHistorySearch] = useState('');
-  const [historyFilter, setHistoryFilter] = useState<'all' | ThreatLevel>('all');
+  const [historyFilter, setHistoryFilter] = useState<'all' | VerdictKey>('all');
   const [toast, setToast] = useState('');
   const [modal, setModal] = useState<ModalContent | null>(null);
   const [expandedChecks, setExpandedChecks] = useState<string[]>([]);
@@ -506,6 +536,7 @@ export default function Scanner() {
         scanType: 'url',
         displayValue: safeDomain,
         finalVerdict: report.finalVerdict,
+        level: report.level,
         scannedAt: report.scannedAt,
         cached: report.cached,
         checks: report.checks.map(({ checkName, threatLevel }) => ({ checkName, threatLevel })),
@@ -519,21 +550,38 @@ export default function Scanner() {
     }
   };
 
-  const handleCodeDetected = (result: BarcodeScanningResult) => {
+  /** Returns the trimmed code, or null (with a one-time notice) when it's empty or too long to show */
+  const acceptableCode = (result: Pick<BarcodeScanningResult, 'data'>) => {
     const data = result.data.trim();
-    if (!data || pendingCodeRef.current || scanLock.current) return;
+    if (!data) return null;
     if (data.length > 4096) {
       if (rejectedCodeRef.current !== data) {
         rejectedCodeRef.current = data;
         setToast('This code contains too much data to display safely.');
       }
-      return;
+      return null;
     }
     rejectedCodeRef.current = null;
+    return data;
+  };
+
+  // A new code in view replaces the pending one, so Verify always acts on what the camera sees now
+  const handleCodeDetected = (result: BarcodeScanningResult) => {
+    if (scanLock.current) return;
+    const data = acceptableCode(result);
+    const current = pendingCodeRef.current;
+    if (!data || (current && current.data === data && current.type === result.type)) return;
     const candidate: PendingCode = { data, type: result.type, cornerPoints: result.cornerPoints };
     pendingCodeRef.current = candidate;
     setPendingCode(candidate);
     setActiveTamper(null);
+  };
+
+  const handleCodeLost = () => {
+    if (scanLock.current) return;
+    rejectedCodeRef.current = null;
+    pendingCodeRef.current = null;
+    setPendingCode(null);
   };
 
   const processDecodedCode = (result: Pick<BarcodeScanningResult, 'data' | 'type'>) => {
@@ -638,7 +686,11 @@ export default function Scanner() {
         setToast('No QR code or barcode was found in that image. Try another image.');
         return;
       }
-      handleCodeDetected(results[0]);
+      // The person picked this image, so check it now; the camera's sticker check doesn't apply to it
+      const data = acceptableCode(results[0]);
+      if (!data) return;
+      setActiveTamper(null);
+      processDecodedCode({ data, type: results[0].type });
     } catch (error) {
       setToast(error instanceof Error ? error.message : 'The image could not be scanned. Please try another image.');
     } finally {
@@ -715,6 +767,7 @@ export default function Scanner() {
     setActiveScan({
       url: `https://${entry.displayValue}`,
       finalVerdict: entry.finalVerdict,
+      level: entry.level,
       checks: entry.checks,
       scannedAt: entry.scannedAt,
       cached: entry.cached,
@@ -727,7 +780,7 @@ export default function Scanner() {
   const shareResult = async () => {
     if (!activeScan) return;
     const hostname = parseUserUrl(activeScan.url)?.hostname ?? activeScan.url;
-    const message = `SafeScan checked ${hostname}: ${verdictLabel(activeScan.finalVerdict)}. Scan links before opening them.`;
+    const message = `SafeScan checked ${hostname}: ${verdictLabel(verdictKey(activeScan.finalVerdict, activeScan.level))}. Scan links before opening them.`;
     try {
       if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.share) {
         await navigator.share({ text: message });
@@ -749,10 +802,44 @@ export default function Scanner() {
     );
   };
 
+  const openLink = async (target: string) => {
+    try {
+      await Linking.openURL(target);
+    } catch {
+      setToast('This link couldn’t be opened on this device.');
+    }
+  };
+
+  // Only "No known threats" opens straight away; every other verdict asks first, with Go back as the default
+  const requestOpenLink = (scan: ScanReport) => {
+    const key = verdictKey(scan.finalVerdict, scan.level);
+    if (key === 1) {
+      void openLink(scan.url);
+      return;
+    }
+    const hostname = parseUserUrl(scan.url)?.hostname ?? scan.url;
+    setModal({
+      kind: 'open-link',
+      title: 'Are you sure?',
+      body: key === 'unverified'
+        ? `SafeScan couldn’t verify ${hostname}. Your browser will open it, and SafeScan can’t tell you whether it’s safe.`
+        : `SafeScan rated ${hostname} “${verdictLabel(key)}”. Your browser will open it. Only continue if you trust where this link came from.`,
+      target: scan.url,
+    });
+  };
+
+  const openCommunityDetails = async (urlHash: string) => {
+    try {
+      await WebBrowser.openBrowserAsync(communityLinkUrl(urlHash));
+    } catch {
+      setToast('The community page couldn’t be opened.');
+    }
+  };
+
   const showUrlDetails = (scan: ScanReport) => {
     setModal({
       title: 'Link details',
-      body: 'This is the link SafeScan submitted for checking. SafeScan does not open the destination.',
+      body: 'This is the link SafeScan submitted for checking. SafeScan does not visit this link itself. If you open it, your browser does.',
       url: scan.url,
       kind: 'url',
     });
@@ -806,24 +893,26 @@ export default function Scanner() {
         reduceMotion={reduceMotion}
         hasPendingCode={pendingCode !== null || tamperBusy}
         onCode={handleCodeDetected}
+        onCodeLost={handleCodeLost}
         onGallery={() => void openGallery()}
         galleryBusy={galleryBusy}
         onNotice={setToast}
       />
       <Pressable
         onPress={confirmPendingCode}
-        disabled={galleryBusy || tamperBusy}
+        disabled={!pendingCode || galleryBusy || tamperBusy}
         accessibilityRole="button"
+        accessibilityState={{ disabled: !pendingCode || galleryBusy || tamperBusy }}
         accessibilityLabel={
           pendingCode
             ? parseScannedWebUrl(pendingCode.data, pendingCode.type) ? 'Verify detected link' : 'View scanned code'
-            : 'Scan QR code'
+            : 'Point the camera at a code to scan it'
         }
         style={({ pressed }) => [
           styles.primaryButton,
           styles.homeScanButton,
           pressed ? { opacity: 0.88 } : null,
-          galleryBusy || tamperBusy ? { opacity: 0.6 } : null,
+          !pendingCode || galleryBusy || tamperBusy ? { opacity: 0.6 } : null,
         ]}
       >
         <AppIcon
@@ -836,7 +925,7 @@ export default function Scanner() {
             ? 'Checking sticker signal…'
             : pendingCode
             ? parseScannedWebUrl(pendingCode.data, pendingCode.type) ? 'Verify Link' : 'View Scanned Code'
-            : 'Scan QR Code'}
+            : 'Point at a QR Code'}
         </Text>
       </Pressable>
       <View style={styles.homeRecent}>
@@ -863,7 +952,7 @@ export default function Scanner() {
   );
 
   const filteredHistory = history.filter((entry) => {
-    const matchesFilter = historyFilter === 'all' || entry.finalVerdict === historyFilter;
+    const matchesFilter = historyFilter === 'all' || verdictKey(entry.finalVerdict, entry.level) === historyFilter;
     return matchesFilter && entry.displayValue.toLowerCase().includes(historySearch.toLowerCase());
   });
 
@@ -896,7 +985,7 @@ export default function Scanner() {
             </Pressable>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 13 }}>
-            {(['all', 'safe', 'suspicious', 'malicious', 'unknown'] as const).map((filter) => {
+            {(['all', 1, 2, 3, 4, 'unverified'] as const).map((filter) => {
               const selected = historyFilter === filter;
               return (
                 <Pressable
@@ -1145,13 +1234,14 @@ export default function Scanner() {
 
   const renderResult = (detailed: boolean) => {
     if (!activeScan) return null;
-    const presentation = verdictDetails(activeScan.finalVerdict, colors);
+    const key = verdictKey(activeScan.finalVerdict, activeScan.level);
+    const presentation = verdictDetails(key, colors);
     const parsedActiveUrl = parseUserUrl(activeScan.url);
     const domain = parsedActiveUrl?.hostname ?? activeScan.url;
     const expanded = detailed || screen === 'report';
     const verdictSummary = activeScan.checks.length > 0
       ? presentation.summary
-      : activeScan.finalVerdict === 'safe'
+      : key === 1
         ? 'The scanner returned a no-known-threats result, but did not provide individual checks. No scan can guarantee that a link is safe.'
         : presentation.summary;
 
@@ -1225,9 +1315,9 @@ export default function Scanner() {
         </View>
 
         <View style={[styles.banner, { backgroundColor: presentation.tint }]}>
-          <AppIcon name={activeScan.finalVerdict === 'malicious' ? 'shield' : 'bulb-outline'} color={presentation.color} size={20} />
+          <AppIcon name={key === 3 || key === 4 ? 'shield' : 'bulb-outline'} color={presentation.color} size={20} />
           <View style={{ flex: 1 }}>
-            <Text style={styles.bannerTitle}>{activeScan.finalVerdict === 'malicious' ? 'Recommended action' : 'Keep this in mind'}</Text>
+            <Text style={styles.bannerTitle}>{key === 3 || key === 4 ? 'Recommended action' : 'Keep this in mind'}</Text>
             <Text style={styles.bannerText}>{presentation.action}</Text>
           </View>
         </View>
@@ -1279,6 +1369,29 @@ export default function Scanner() {
             <Text style={styles.secondaryButtonText}>Share</Text>
           </Pressable>
         </View>
+        <View style={styles.reportActionRow}>
+          <Pressable onPress={() => requestOpenLink(activeScan)} style={[styles.secondaryButton, styles.reportButton]} accessibilityRole="button">
+            <AppIcon name="open-outline" color={colors.navy} size={17} />
+            <Text style={styles.secondaryButtonText}>Open link</Text>
+          </Pressable>
+          {!!activeScan.urlHash && (
+            <Pressable
+              onPress={() => void openCommunityDetails(activeScan.urlHash ?? '')}
+              style={[styles.secondaryButton, styles.reportButton]}
+              accessibilityRole="button"
+              accessibilityLabel="See community details"
+            >
+              <AppIcon name="people-outline" color={colors.navy} size={17} />
+              <Text style={styles.secondaryButtonText} numberOfLines={1}>Community details</Text>
+            </Pressable>
+          )}
+        </View>
+        {!isHistoricalReport && (
+          <Pressable onPress={() => setScreen('share')} style={[styles.secondaryButton, { marginTop: 10 }]} accessibilityRole="button">
+            <AppIcon name="megaphone-outline" color={colors.navy} size={17} />
+            <Text style={styles.secondaryButtonText}>Share with community</Text>
+          </Pressable>
+        )}
         <Pressable
           onPress={() => {
             if (isHistoricalReport) void startScan(activeScan.url);
@@ -1307,6 +1420,9 @@ export default function Scanner() {
       case 'code': return renderCodeResult();
       case 'result': return renderResult(false);
       case 'report': return renderResult(true);
+      case 'share': return activeScan
+        ? <ShareWithCommunity url={activeScan.url} colors={colors} styles={styles} onBack={() => setScreen('result')} />
+        : renderHome();
       default: return renderHome();
     }
   };
@@ -1400,7 +1516,24 @@ export default function Scanner() {
                 </Pressable>
               </>
             )}
-            {modal?.kind === 'clear-history' ? (
+            {modal?.kind === 'open-link' ? (
+              <View style={styles.reportActionRow}>
+                <Pressable
+                  onPress={() => {
+                    const target = modal.target;
+                    setModal(null);
+                    if (target) void openLink(target);
+                  }}
+                  style={[styles.secondaryButton, styles.reportButton]}
+                  accessibilityRole="button"
+                >
+                  <Text style={[styles.secondaryButtonText, { color: colors.red }]}>Open anyway</Text>
+                </Pressable>
+                <Pressable onPress={() => setModal(null)} style={[styles.primaryButton, styles.reportButton, { marginTop: 0 }]} accessibilityRole="button" accessibilityHint="Closes this prompt without opening the link">
+                  <Text style={styles.primaryButtonText}>Go back</Text>
+                </Pressable>
+              </View>
+            ) : modal?.kind === 'clear-history' ? (
               <View style={styles.reportActionRow}>
                 <Pressable onPress={() => setModal(null)} style={[styles.secondaryButton, styles.reportButton]} accessibilityRole="button">
                   <Text style={styles.secondaryButtonText}>Cancel</Text>

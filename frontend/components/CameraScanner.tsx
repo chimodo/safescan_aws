@@ -12,6 +12,35 @@ export interface CameraScannerHandle {
 }
 
 const CAPTURE_SETTLE_MS = 250;
+// Detections arrive several times a second while a code is in view; this long without one means it left
+const CODE_LOST_MS = 500;
+
+type LiveCode = { data: string; points: PolygonPoint[] };
+
+/** One edge of the detected code's outline, drawn as a rotated bar */
+function OutlineEdge({ from, to }: { from: PolygonPoint; to: PolygonPoint }) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const length = Math.hypot(dx, dy);
+  return (
+    <View
+      style={{
+        position: 'absolute',
+        left: (from.x + to.x) / 2 - length / 2,
+        top: (from.y + to.y) / 2 - 1.5,
+        width: length,
+        height: 3,
+        borderRadius: 2,
+        backgroundColor: '#F2A900',
+        transform: [{ rotate: `${Math.atan2(dy, dx)}rad` }],
+      }}
+    />
+  );
+}
+
+function movedApart(a: PolygonPoint[], b: PolygonPoint[]) {
+  return a.length !== b.length || a.some((point, i) => Math.abs(point.x - b[i].x) > 2 || Math.abs(point.y - b[i].y) > 2);
+}
 
 const CameraScanner = forwardRef<CameraScannerHandle, {
   active: boolean;
@@ -22,6 +51,8 @@ const CameraScanner = forwardRef<CameraScannerHandle, {
   reduceMotion: boolean;
   hasPendingCode: boolean;
   onCode: (result: BarcodeScanningResult) => void;
+  /** Called when no code has been detected for CODE_LOST_MS */
+  onCodeLost: () => void;
   onGallery: () => void;
   galleryBusy: boolean;
   onNotice: (message: string) => void;
@@ -34,6 +65,7 @@ const CameraScanner = forwardRef<CameraScannerHandle, {
   reduceMotion,
   hasPendingCode,
   onCode,
+  onCodeLost,
   onGallery,
   galleryBusy,
   onNotice,
@@ -44,6 +76,9 @@ const CameraScanner = forwardRef<CameraScannerHandle, {
   const [cameraError, setCameraError] = useState('');
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraKey, setCameraKey] = useState(0);
+  const [liveCode, setLiveCode] = useState<LiveCode | null>(null);
+  const lostTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const forwardedCode = useRef<string | null>(null);
   // Lazy state, not a ref: the value is created once and is safe to read during render
   const [scanLineProgress] = useState(() => new Animated.Value(0));
 
@@ -72,12 +107,17 @@ const CameraScanner = forwardRef<CameraScannerHandle, {
     return () => animation.stop();
   }, [active, cameraError, cameraReady, reduceMotion, scanLineProgress]);
 
+  useEffect(() => () => {
+    if (lostTimer.current) clearTimeout(lostTimer.current);
+  }, []);
+
   // Adjusting state during render when a prop changes avoids an extra effect render.
   const [wasActive, setWasActive] = useState(active);
   if (active !== wasActive) {
     setWasActive(active);
     if (!active) {
       setCameraReady(false);
+      setLiveCode(null);
     }
   }
 
@@ -117,7 +157,26 @@ const CameraScanner = forwardRef<CameraScannerHandle, {
   };
 
   const onBarcodeScanned = (result: BarcodeScanningResult) => {
-    if (!hasPendingCode) onCode(result);
+    const points = result.cornerPoints?.length === 4 ? result.cornerPoints.map(({ x, y }) => ({ x, y })) : [];
+    setLiveCode((previous) =>
+      previous && previous.data === result.data && !movedApart(previous.points, points)
+        ? previous
+        : { data: result.data, points });
+
+    if (lostTimer.current) clearTimeout(lostTimer.current);
+    lostTimer.current = setTimeout(() => {
+      lostTimer.current = null;
+      forwardedCode.current = null;
+      setLiveCode(null);
+      onCodeLost();
+    }, CODE_LOST_MS);
+
+    // Forward only a new code, so a different code in view replaces the pending one
+    const key = `${result.type}:${result.data}`;
+    if (!hasPendingCode || key !== forwardedCode.current) {
+      forwardedCode.current = key;
+      onCode(result);
+    }
   };
 
   useImperativeHandle(ref, () => ({
@@ -231,6 +290,13 @@ const CameraScanner = forwardRef<CameraScannerHandle, {
             onCameraReady={() => setCameraReady(true)}
             onMountError={onCameraError}
           />
+          {liveCode && liveCode.points.length === 4 && (
+            <View pointerEvents="none" style={styles.homeCameraPreview}>
+              {liveCode.points.map((point, i) => (
+                <OutlineEdge key={i} from={point} to={liveCode.points[(i + 1) % 4]} />
+              ))}
+            </View>
+          )}
           <View pointerEvents="none" style={styles.cameraHomeOverlay}>
             <View style={styles.cameraFrame}>
               <View style={[styles.cameraCorner, styles.cameraCornerTopLeft]} />
@@ -264,11 +330,13 @@ const CameraScanner = forwardRef<CameraScannerHandle, {
             </View>
           </View>
           <View style={styles.cameraHomeInstruction}>
-            <Text style={styles.cameraInstructionText}>
-              {hasPendingCode
-                ? 'Code detected. Tap below when you’re ready to continue.'
-                : 'Position a QR code or barcode inside the frame.'}
-            </Text>
+            {liveCode ? (
+              <Text style={styles.cameraInstructionText} numberOfLines={2} accessibilityLabel={`Detected code: ${liveCode.data}`}>
+                {liveCode.data}
+              </Text>
+            ) : (
+              <Text style={styles.cameraInstructionText}>Position a QR code or barcode inside the frame.</Text>
+            )}
           </View>
           {!cameraReady && (
             <View pointerEvents="none" style={styles.cameraHomeLoading}>
