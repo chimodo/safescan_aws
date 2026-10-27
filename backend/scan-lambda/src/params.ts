@@ -23,4 +23,5 @@ export const PARAMS = {
   safeBrowsingKey: process.env.SB_KEY_PARAM ?? '/safescan/safe-browsing-key',
   hashPepper: process.env.PEPPER_PARAM ?? '/safescan/hash-pepper',
   githubToken: process.env.GITHUB_TOKEN_PARAM ?? '/safescan/github-token',
+  captchaSecret: process.env.CAPTCHA_SECRET_PARAM ?? '/safescan/captcha-secret',
 };
